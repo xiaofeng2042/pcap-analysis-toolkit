@@ -1,0 +1,4 @@
+# 简化版SMTP流量过滤规则
+# 使用方法: zeek -i en0 -f "$(cat simple-smtp-filter.bpf)" live-smtp-monitor.zeek
+
+port 25 or port 465 or port 587 or port 2525

@@ -1,0 +1,19 @@
+# BPF过滤规则 - 只捕获SMTP相关流量
+# 使用方法: zeek -i en0 -f "$(cat smtp-filter.bpf)" live-smtp-monitor.zeek
+
+# SMTP标准端口和常用端口
+port 25 or port 465 or port 587 or port 2525 or 
+# DNS查询（用于MX记录解析）
+port 53 or
+# 可能的SMTP over非标准端口
+(tcp and (
+    # 检查TCP载荷中的SMTP关键字
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x32323020) or  # "220 "
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x45484c4f) or  # "EHLO"
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x48454c4f) or  # "HELO"
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x4d41494c) or  # "MAIL"
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x52435054) or  # "RCPT"
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x44415441) or  # "DATA"
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x51554954) or  # "QUIT"
+    (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x53544152)     # "STAR" (STARTTLS)
+))
