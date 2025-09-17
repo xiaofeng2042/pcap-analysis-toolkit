@@ -66,39 +66,50 @@ echo -e "${YELLOW}📁 日志目录: $LOG_DIR${NC}"
 # 显示监控选项
 echo ""
 echo "选择监控模式:"
-echo "1) 基础监控 (只监控标准SMTP端口)"
-echo "2) 增强监控 (包含深度包检测)"
-echo "3) 自定义过滤器"
-echo "4) 无过滤器 (监控所有流量)"
+echo "1) 基础SMTP监控 (只监控SMTP发送端口: 25,465,587,2525)"
+echo "2) 完整邮件监控 (SMTP发送 + IMAP/POP3接收)"
+echo "3) 增强监控 (包含深度包检测)"
+echo "4) 自定义过滤器"
+echo "5) 无过滤器 (监控所有流量)"
 
-read -p "请选择 [1-4]: " choice
+read -p "请选择 [1-5]: " choice
 
 case $choice in
     1)
         FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525\""
+        ZEEK_SCRIPT="$PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
         echo -e "${GREEN}📊 使用基础SMTP端口过滤${NC}"
         ;;
     2)
-        FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525 or port 53\""
-        echo -e "${GREEN}📊 使用增强SMTP检测${NC}"
+        FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525 or port 143 or port 993 or port 110 or port 995\""
+        ZEEK_SCRIPT="$PROJECT_ROOT/zeek-scripts/enhanced-mail-monitor.zeek"
+        echo -e "${GREEN}📧 使用完整邮件协议监控 (SMTP + IMAP + POP3)${NC}"
         ;;
     3)
-        read -p "请输入BPF过滤规则: " custom_filter
-        FILTER_CMD="-f \"$custom_filter\""
-        echo -e "${GREEN}📊 使用自定义过滤器: $custom_filter${NC}"
+        FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525 or port 53\""
+        ZEEK_SCRIPT="$PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
+        echo -e "${GREEN}📊 使用增强SMTP检测${NC}"
         ;;
     4)
+        read -p "请输入BPF过滤规则: " custom_filter
+        FILTER_CMD="-f \"$custom_filter\""
+        ZEEK_SCRIPT="$PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
+        echo -e "${GREEN}📊 使用自定义过滤器: $custom_filter${NC}"
+        ;;
+    5)
         FILTER_CMD=""
+        ZEEK_SCRIPT="$PROJECT_ROOT/zeek-scripts/enhanced-mail-monitor.zeek"
         echo -e "${YELLOW}⚠️  无过滤器模式 - 将监控所有网络流量${NC}"
         ;;
     *)
         echo -e "${RED}❌ 无效选择，使用默认基础监控${NC}"
         FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525\""
+        ZEEK_SCRIPT="$PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
         ;;
 esac
 
 # 构建zeek命令
-ZEEK_CMD="zeek -i $INTERFACE $FILTER_CMD $PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
+ZEEK_CMD="zeek -i $INTERFACE $FILTER_CMD $ZEEK_SCRIPT"
 
 echo ""
 echo -e "${BLUE}🎯 启动命令:${NC}"

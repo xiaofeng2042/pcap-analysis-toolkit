@@ -1,0 +1,16 @@
+# 增强版邮件协议BPF过滤器
+# 包含SMTP发送和IMAP/POP3接收协议
+
+# SMTP协议端口 (发送邮件)
+port 25 or      # SMTP (明文)
+port 465 or     # SMTPS (SSL/TLS)
+port 587 or     # SMTP Submission (STARTTLS)
+port 2525 or    # 备用SMTP端口
+
+# IMAP协议端口 (接收邮件)
+port 143 or     # IMAP (明文)
+port 993 or     # IMAPS (SSL/TLS)
+
+# POP3协议端口 (接收邮件)
+port 110 or     # POP3 (明文)
+port 995        # POP3S (SSL/TLS)
