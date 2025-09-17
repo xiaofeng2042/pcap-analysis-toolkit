@@ -42,3 +42,4 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+live-logs/

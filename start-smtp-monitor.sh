@@ -74,11 +74,11 @@ read -p "请选择 [1-4]: " choice
 
 case $choice in
     1)
-        FILTER_CMD="-f \"$(cat simple-smtp-filter.bpf)\""
+        FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525\""
         echo -e "${GREEN}📊 使用基础SMTP端口过滤${NC}"
         ;;
     2)
-        FILTER_CMD="-f \"$(cat smtp-filter.bpf)\""
+        FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525 or port 53\""
         echo -e "${GREEN}📊 使用增强SMTP检测${NC}"
         ;;
     3)
@@ -92,12 +92,12 @@ case $choice in
         ;;
     *)
         echo -e "${RED}❌ 无效选择，使用默认基础监控${NC}"
-        FILTER_CMD="-f \"$(cat simple-smtp-filter.bpf)\""
+        FILTER_CMD="-f \"port 25 or port 465 or port 587 or port 2525\""
         ;;
 esac
 
 # 构建zeek命令
-ZEEK_CMD="zeek -i $INTERFACE $FILTER_CMD live-smtp-monitor.zeek"
+ZEEK_CMD="zeek -i $INTERFACE $FILTER_CMD simple-smtp-monitor.zeek"
 
 echo ""
 echo -e "${BLUE}🎯 启动命令:${NC}"
@@ -108,7 +108,7 @@ echo ""
 cat > stop-monitor.sh << 'EOF'
 #!/bin/bash
 echo "🛑 停止SMTP监控..."
-pkill -f "zeek.*live-smtp-monitor"
+pkill -f "zeek.*simple-smtp-monitor"
 echo "✅ 监控已停止"
 EOF
 chmod +x stop-monitor.sh
@@ -128,6 +128,10 @@ echo -e "${GREEN}🚀 开始SMTP实时监控...${NC}"
 echo -e "${BLUE}💡 提示: 按 Ctrl+C 停止监控${NC}"
 echo "=================================="
 
+# 获取脚本绝对路径（在切换目录之前）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # 切换到日志目录并启动监控
 cd "$LOG_DIR"
-eval $ZEEK_CMD
+# 使用绝对路径启动zeek
+eval zeek -i $INTERFACE $FILTER_CMD "$SCRIPT_DIR/simple-smtp-monitor.zeek"

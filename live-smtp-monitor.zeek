@@ -24,19 +24,17 @@ redef Log::enable_local_logging = T;
 #     ["smtp-only"] = "port 25 or port 465 or port 587 or port 2525"
 # };
 
-# 实时统计模块
-module LiveSMTPStats;
+# 统计变量
+global smtp_connections: count = 0;
+global starttls_attempts: count = 0;
+global starttls_success: count = 0;
+global encrypted_connections: count = 0;
 
-export {
-    # 统计变量
-    global smtp_connections: count = 0;
-    global starttls_attempts: count = 0;
-    global starttls_success: count = 0;
-    global encrypted_connections: count = 0;
-    
-    # 定时报告间隔（秒）
-    const report_interval = 300sec &redef;
-}
+# 定时报告间隔（秒）
+const report_interval = 300sec &redef;
+
+# 定义统计报告事件
+global print_stats_event: event();
 
 # 连接统计
 event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
@@ -73,12 +71,12 @@ event zeek_init()
 {
     print "🚀 实时SMTP监控已启动";
     print fmt("📊 统计报告间隔: %s", report_interval);
-    schedule report_interval { LiveSMTPStats::print_stats() };
+    schedule report_interval { print_stats_event() };
 }
 
-event LiveSMTPStats::print_stats()
+event print_stats_event()
 {
-    print "=" * 50;
+    print string_cat("|", string_fill(50, "="), "|");
     print fmt("📊 SMTP流量统计 [%s]", strftime("%Y-%m-%d %H:%M:%S", current_time()));
     print fmt("   SMTP连接总数: %d", smtp_connections);
     print fmt("   STARTTLS尝试: %d", starttls_attempts);
@@ -88,10 +86,10 @@ event LiveSMTPStats::print_stats()
     local encryption_rate = starttls_attempts > 0 ? 
         (starttls_success * 100.0 / starttls_attempts) : 0.0;
     print fmt("   加密成功率: %.1f%%", encryption_rate);
-    print "=" * 50;
+    print string_cat("|", string_fill(50, "="), "|");
     
     # 安排下次报告
-    schedule report_interval { LiveSMTPStats::print_stats() };
+    schedule report_interval { print_stats_event() };
 }
 
 # 邮件附件检测
@@ -99,7 +97,8 @@ event file_new(f: fa_file)
 {
     if ( f$source == "SMTP" )
     {
-        print fmt("📎 检测到邮件附件: %s (大小: %s)", 
-                 f$info$filename, f$info$size);
+        local filename = f?$info && f$info?$filename ? f$info$filename : "未知文件";
+        local filesize = f?$info && f$info?$size ? fmt("%d", f$info$size) : "未知大小";
+        print fmt("📎 检测到邮件附件: %s (大小: %s)", filename, filesize);
     }
 }
