@@ -1,5 +1,6 @@
-# Zeek日志文件（主目录下的临时文件）
-/*.log
+# Zeek日志文件
+logs/
+*.log
 
 # 系统文件
 .DS_Store
@@ -42,5 +43,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-live-logs/
-*.log
+
+# 编译和构建文件
+*.o
+*.so
+*.dylib
+
+# 备份文件
+*.bak
+*.backup

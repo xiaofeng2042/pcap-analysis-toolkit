@@ -39,12 +39,13 @@ if ! ifconfig "$INTERFACE" &> /dev/null; then
     exit 1
 fi
 
+# 获取脚本目录的父目录（项目根目录）
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # 检查必要文件
 REQUIRED_FILES=(
-    "live-smtp-monitor.zeek"
-    "site-smtp-ports.zeek" 
-    "smtp-starttls-flag.zeek"
-    "simple-smtp-filter.bpf"
+    "$PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
+    "$PROJECT_ROOT/configs/simple-smtp-filter.bpf"
 )
 
 for file in "${REQUIRED_FILES[@]}"; do
@@ -55,7 +56,7 @@ for file in "${REQUIRED_FILES[@]}"; do
 done
 
 # 创建日志目录
-LOG_DIR="live-logs/$(date +%Y%m%d_%H%M%S)"
+LOG_DIR="$PROJECT_ROOT/logs/live-logs/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOG_DIR"
 
 echo -e "${GREEN}✅ 环境检查完成${NC}"
@@ -97,7 +98,7 @@ case $choice in
 esac
 
 # 构建zeek命令
-ZEEK_CMD="zeek -i $INTERFACE $FILTER_CMD simple-smtp-monitor.zeek"
+ZEEK_CMD="zeek -i $INTERFACE $FILTER_CMD $PROJECT_ROOT/zeek-scripts/simple-smtp-monitor.zeek"
 
 echo ""
 echo -e "${BLUE}🎯 启动命令:${NC}"
@@ -105,15 +106,15 @@ echo "$ZEEK_CMD"
 echo ""
 
 # 创建停止脚本
-cat > stop-monitor.sh << 'EOF'
+cat > "$PROJECT_ROOT/scripts/stop-monitor.sh" << 'EOF'
 #!/bin/bash
 echo "🛑 停止SMTP监控..."
 pkill -f "zeek.*simple-smtp-monitor"
 echo "✅ 监控已停止"
 EOF
-chmod +x stop-monitor.sh
+chmod +x "$PROJECT_ROOT/scripts/stop-monitor.sh"
 
-echo -e "${GREEN}📝 已创建停止脚本: ./stop-monitor.sh${NC}"
+echo -e "${GREEN}📝 已创建停止脚本: $PROJECT_ROOT/scripts/stop-monitor.sh${NC}"
 echo ""
 
 # 倒计时启动
@@ -129,7 +130,7 @@ echo -e "${BLUE}💡 提示: 按 Ctrl+C 停止监控${NC}"
 echo "=================================="
 
 # 获取脚本绝对路径（在切换目录之前）
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$PROJECT_ROOT/zeek-scripts"
 
 # 切换到日志目录并启动监控
 cd "$LOG_DIR"

@@ -1,119 +1,94 @@
-# PCAP文件分析工具集
+# SMTP 实时监控项目
 
-这个项目包含了使用Zeek网络安全监控工具分析PCAP文件的完整解决方案，特别专注于SMTP协议的解析和JSON格式输出。
+这是一个基于 Zeek 的 SMTP 实时监控系统，用于监控和分析网络中的 SMTP 流量。
 
-## 📁 项目结构
+## 项目结构
 
 ```
-├── analysis/                    # 各个PCAP文件的独立解析结果
-│   ├── sample-imf/             # sample-imf.pcap 解析结果
-│   ├── sample-TNEF/            # sample-TNEF.pcap 解析结果  
-│   ├── smtp/                   # smtp.pcap 解析结果
-│   ├── smtp-ssl/               # smtp-ssl.pcapng 解析结果
-│   └── smtp2525-ssl/           # smtp2525-ssl.pcapng 解析结果
-├── *.pcap/*.pcapng             # 原始PCAP文件
-├── analyze_all_pcaps.sh        # 批量解析脚本
-├── summary_analysis.sh         # 解析结果汇总脚本
-├── convert_smtp_to_json.py     # SMTP日志转JSON工具
-└── zeek-json.zeek              # Zeek JSON输出配置
+.
+├── README.md                    # 项目说明文档
+├── .gitignore                   # Git 忽略文件配置
+├── scripts/                     # Shell 脚本目录
+│   ├── start-smtp-monitor.sh    # SMTP 监控启动脚本
+│   └── stop-monitor.sh          # 监控停止脚本（运行时生成）
+├── zeek-scripts/                # Zeek 脚本目录
+│   ├── simple-smtp-monitor.zeek # 简化版 SMTP 监控脚本
+│   └── live-smtp-monitor.zeek   # 完整版 SMTP 监控脚本
+├── pcap-samples/                # PCAP 样本文件目录
+│   └── *.pcap, *.pcapng         # 网络包捕获文件
+├── configs/                     # 配置文件目录
+│   └── *.bpf                    # BPF 过滤器配置
+├── docs/                        # 文档目录
+│   └── README*.md               # 各种说明文档
+└── logs/                        # 日志目录
+    └── live-logs/               # 实时监控日志
+        └── YYYYMMDD_HHMMSS/     # 按时间戳分组的日志
 ```
 
-## 🚀 快速开始
+## 快速开始
 
-### 1. 批量解析所有PCAP文件
+### 1. 启动监控
 
 ```bash
-./analyze_all_pcaps.sh
+cd /Users/fxf/Desktop/123
+sudo ./scripts/start-smtp-monitor.sh [网卡名称]
 ```
 
-### 2. 查看解析结果汇总
+默认监控网卡 `en0`，你可以指定其他网卡。
+
+### 2. 选择监控模式
+
+启动时会提示选择监控模式：
+- **基础监控**: 只监控标准 SMTP 端口 (25, 465, 587, 2525)
+- **增强监控**: 包含深度包检测
+- **自定义过滤器**: 使用自定义 BPF 过滤规则
+- **无过滤器**: 监控所有网络流量
+
+### 3. 停止监控
 
 ```bash
-./summary_analysis.sh
+# 使用生成的停止脚本
+./scripts/stop-monitor.sh
+
+# 或者手动停止
+pkill -f "zeek.*simple-smtp-monitor"
 ```
 
-### 3. 单独解析特定文件
+## 监控功能
 
-```bash
-# 清理之前的日志
-rm -f *.log
+- **SMTP 连接监控**: 实时监控 SMTP 连接建立
+- **TLS/SSL 监控**: 监控 STARTTLS 握手过程
+- **连接统计**: 定期输出连接统计信息
+- **日志记录**: 自动记录所有监控数据到日志文件
 
-# 解析单个文件并输出JSON格式
-zeek -C -r your_file.pcap zeek-json.zeek
+## 日志文件
 
-# 查看SMTP日志
-cat smtp.log | jq .
-```
+监控日志保存在 `logs/live-logs/YYYYMMDD_HHMMSS/` 目录下：
+- `smtp.log`: SMTP 连接日志
+- `ssl.log`: SSL/TLS 连接日志
+- 其他 Zeek 生成的日志文件
 
-## 📊 解析结果
+## 系统要求
 
-项目成功解析了5个PCAP文件：
+- macOS 或 Linux 系统
+- Zeek 网络分析框架
+- root 权限（用于网络监控）
 
-- **sample-imf.pcap**: 包含完整SMTP邮件传输，带附件
-- **sample-TNEF.pcap**: 包含多个附件的SMTP邮件
-- **smtp-ssl.pcapng**: SSL加密的SMTP连接
-- **smtp.pcap**: 标准SMTP邮件传输
-- **smtp2525-ssl.pcapng**: 异常端口的SSL连接
+## 注意事项
 
-### 统计数据
-- 总SMTP记录数: 4条
-- 总连接记录数: 45条  
-- 总文件记录数: 8条
+- 监控需要 root 权限
+- 确保指定的网卡存在且可用
+- 监控会产生大量日志，注意磁盘空间
+- 建议在测试环境中使用
 
-## 🛠️ 工具说明
+## 故障排除
 
-### analyze_all_pcaps.sh
-批量解析脚本，为每个PCAP文件创建独立的输出目录，避免日志混乱。
+如果遇到问题，请检查：
+1. Zeek 是否正确安装
+2. 网卡名称是否正确
+3. 是否有足够的权限
+4. 防火墙设置是否阻止监控
 
-### summary_analysis.sh  
-生成详细的解析结果汇总报告，包括统计信息和SMTP内容预览。
+## 许可证
 
-### convert_smtp_to_json.py
-将Zeek的SMTP日志转换为标准JSON格式的Python脚本。
-
-### zeek-json.zeek
-Zeek配置文件，设置所有日志默认输出为JSON格式。
-
-## 📋 解析的协议类型
-
-- **SMTP**: 邮件传输协议
-- **SSL/TLS**: 加密连接
-- **DNS**: 域名解析
-- **FILES**: 文件传输记录
-- **X509**: 证书信息
-- **CONN**: 网络连接记录
-
-## 🔧 依赖要求
-
-- Zeek网络安全监控工具
-- jq (JSON处理工具)
-- Python 3.x (用于转换脚本)
-
-## 💡 使用技巧
-
-1. **避免日志混乱**: 始终为每个PCAP文件使用独立的输出目录
-2. **JSON格式输出**: 使用 `LogAscii::use_json=T` 参数或配置文件
-3. **单文件处理**: 一次只处理一个PCAP文件以获得最佳结果
-4. **美化输出**: 使用 `jq .` 命令美化JSON输出
-
-## 📝 示例输出
-
-```json
-{
-  "ts": 1182675363.843094,
-  "uid": "CfkGrakgmF4BNVkQl",
-  "id.orig_h": "192.168.1.4",
-  "mailfrom": "sender@example.com",
-  "rcptto": ["recipient@example.com"],
-  "subject": "Test message for capture",
-  "tls": false
-}
-```
-
-## 🎯 关键特性
-
-- ✅ 完全避免日志混乱
-- ✅ JSON格式输出  
-- ✅ 协议完整解析
-- ✅ 可重复执行
-- ✅ 详细统计报告
+本项目仅供学习和研究使用。
