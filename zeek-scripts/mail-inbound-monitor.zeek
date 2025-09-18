@@ -92,46 +92,49 @@ event smtp_reply(c: connection, is_orig: bool, code: count, cmd: string, msg: st
     }
 }
 
-# IMAP 事件监控
-event imap_request(c: connection, is_orig: bool, tag: string, command: string, arg: string) &priority=5
-{
-    local info: Info;
-    info$ts = network_time();
-    info$uid = c$uid;
-    info$id = c$id;
-    info$protocol = "IMAP";
-    info$action = command;
-    info$status = "REQUEST";
-    
-    if ( command == "LOGIN" ) {
-        info$user = arg;
-        info$details = "用户登录";
-    }
-    else if ( command == "SELECT" || command == "EXAMINE" ) {
-        info$mailbox = arg;
-        info$details = fmt("选择邮箱: %s", arg);
-    }
-    else if ( command == "FETCH" ) {
-        info$details = fmt("获取邮件: %s", arg);
-    }
-    
-    Log::write(MailInbound::LOG, info);
-}
+# IMAP 事件监控 - 注释掉不存在的事件处理器
+# 注意：标准Zeek可能不包含imap_request和imap_reply事件
+# 这些事件需要额外的IMAP协议分析器支持
 
-event imap_reply(c: connection, is_orig: bool, tag: string, command: string, reply: string) &priority=5
-{
-    if ( /OK/ in reply ) {
-        local info: Info;
-        info$ts = network_time();
-        info$uid = c$uid;
-        info$id = c$id;
-        info$protocol = "IMAP";
-        info$action = command;
-        info$status = "OK";
-        info$details = reply;
-        Log::write(MailInbound::LOG, info);
-    }
-}
+# event imap_request(c: connection, is_orig: bool, tag: string, command: string, arg: string) &priority=5
+# {
+#     local info: Info;
+#     info$ts = network_time();
+#     info$uid = c$uid;
+#     info$id = c$id;
+#     info$protocol = "IMAP";
+#     info$action = command;
+#     info$status = "REQUEST";
+#     
+#     if ( command == "LOGIN" ) {
+#         info$user = arg;
+#         info$details = "用户登录";
+#     }
+#     else if ( command == "SELECT" || command == "EXAMINE" ) {
+#         info$mailbox = arg;
+#         info$details = fmt("选择邮箱: %s", arg);
+#     }
+#     else if ( command == "FETCH" ) {
+#         info$details = fmt("获取邮件: %s", arg);
+#     }
+#     
+#     Log::write(MailInbound::LOG, info);
+# }
+
+# event imap_reply(c: connection, is_orig: bool, tag: string, command: string, reply: string) &priority=5
+# {
+#     if ( /OK/ in reply ) {
+#         local info: Info;
+#         info$ts = network_time();
+#         info$uid = c$uid;
+# #         info$id = c$id;
+# #         info$protocol = "IMAP";
+# #         info$action = command;
+# #         info$status = "OK";
+#         info$details = reply;
+#         Log::write(MailInbound::LOG, info);
+#     }
+# }
 
 # POP3 事件监控
 event pop3_request(c: connection, is_orig: bool, command: string, arg: string) &priority=5
