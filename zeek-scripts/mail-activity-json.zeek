@@ -39,6 +39,13 @@ export {
         fuids: vector of string &log &optional;
         is_webmail: bool &log &optional;
         
+        # 内容聚焦字段
+        action: string &log &optional;           # "SEND", "RETRIEVE", "FORWARD"
+        mailbox_user: string &log &optional;     # POP3用户名或SMTP认证用户
+        mailbox_host: string &log &optional;     # 邮箱服务器主机
+        size_bytes: count &log &optional;        # 邮件大小（字节）
+        encrypted: bool &log &optional;          # 是否加密传输
+        
         # 兼容性字段（保留原有功能）
         protocol: string &log &optional;
         role: string &log &optional;
@@ -57,7 +64,8 @@ export {
 
     redef enum Log::ID += { LOG };
 
-    option enable_pop3_log: bool = T &redef;
+    # 优化后的POP3日志配置 - 默认关闭以减少协议噪音
+    option enable_pop3_log: bool = F &redef;
     option pop3_log_path: string = "pop3" &redef;
 
     type PopInfo: record {
@@ -97,6 +105,18 @@ export {
     
     # 全局变量存储SMTP会话信息
     global smtp_sessions: table[string] of Info;
+    
+    # POP3会话跟踪表
+    global pop3_sessions: table[string] of Info;
+    
+    # POP3会话状态记录
+    type Pop3SessionState: record {
+        message_number: count &optional;    # 当前检索的消息编号
+        bytes_received: count &default=0;   # 已接收字节数
+        headers_complete: bool &default=F;  # 头部是否解析完成
+    };
+    
+    global pop3_session_states: table[string] of Pop3SessionState;
 }
 
 event zeek_init()
@@ -154,6 +174,7 @@ event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
         info$protocol = "SMTP";
         info$role = "sender";
         info$activity = fmt("SMTP_%s", command);
+        info$action = "SEND";
         ++smtp_connections;
         print fmt("[SMTP] New SMTP Connection: %s:%d -> %s:%d (HELO: %s)", 
                   c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, arg);
@@ -267,9 +288,19 @@ event ssl_established(c: connection)
         if ( uid in MailActivity::smtp_sessions ) {
             local info = MailActivity::smtp_sessions[uid];
             info$tls = T;
+            info$encrypted = T;
             if ( c$ssl?$version )
                 info$tls_version = c$ssl$version;
             Log::write(MailActivity::LOG, info);
+        }
+        
+        if ( uid in MailActivity::pop3_sessions ) {
+            local pop_info = MailActivity::pop3_sessions[uid];
+            pop_info$tls = T;
+            pop_info$encrypted = T;
+            if ( c$ssl?$version )
+                pop_info$tls_version = c$ssl$version;
+            MailActivity::pop3_sessions[uid] = pop_info;
         }
         
         print fmt("[TLS] SSL/TLS Connection Established: %s:%d -> %s:%d", 
@@ -290,54 +321,197 @@ event connection_state_remove(c: connection)
     }
 }
 
-# POP3 事件处理
+# POP3 事件处理 - 优化后的版本，减少协议噪音
 event pop3_request(c: connection, is_orig: bool, command: string, arg: string)
 {
-    if ( ! is_orig || ! MailActivity::enable_pop3_log )
+    if ( ! is_orig )
         return;
     
-    local info: MailActivity::PopInfo = [
-        $ts = network_time(),
-        $uid = c$uid,
-        $id = c$id,
-        $activity = fmt("POP3_%s", command)
-    ];
+    local uid = c$uid;
     
+    # 处理RETR命令 - 创建内容聚焦的会话记录
+    if ( command == "RETR" ) {
+        local info: MailActivity::Info = [
+            $ts = network_time(),
+            $uid = uid,
+            $id = c$id,
+            $protocol = "POP3",
+            $role = "receiver",
+            $action = "RETRIEVE",
+            $activity = "POP3_RETR",
+            $mailbox_host = fmt("%s", c$id$resp_h)
+        ];
+        
+        # 解析消息编号
+        if ( arg != "" ) {
+            info$detail = fmt("Message #%s", arg);
+        }
+        
+        # 存储到POP3会话表中，等待数据解析
+        MailActivity::pop3_sessions[uid] = info;
+        
+        # 初始化会话状态
+        local state: MailActivity::Pop3SessionState = [
+            $bytes_received = 0,
+            $headers_complete = F
+        ];
+        
+        if ( arg != "" ) {
+            state$message_number = to_count(arg);
+        }
+        
+        MailActivity::pop3_session_states[uid] = state;
+        
+        print fmt("[POP3] Starting message retrieval: %s (UID: %s)", arg, uid);
+    }
+    
+    # 只记录重要的POP3命令到单独日志（如果启用）
+    if ( MailActivity::enable_pop3_log ) {
+        # 只记录认证和重要操作，跳过LIST、STAT等噪音命令
+        if ( command == "USER" || command == "PASS" || command == "RETR" || command == "DELE" ) {
+            local pop_info: MailActivity::PopInfo = [
+                $ts = network_time(),
+                $uid = uid,
+                $id = c$id,
+                $activity = fmt("POP3_%s", command)
+            ];
+            
+            if ( command == "USER" ) {
+                pop_info$user = arg;
+                print fmt("[POP3] User Login Attempt: %s", arg);
+                
+                # 记录用户信息到可能的会话中
+                if ( uid in MailActivity::pop3_sessions ) {
+                    MailActivity::pop3_sessions[uid]$mailbox_user = arg;
+                }
+            }
+            else if ( command == "PASS" ) {
+                pop_info$activity = "POP3_PASS";
+                print fmt("[POP3] Password Authentication");
+            }
+            else if ( command == "RETR" ) {
+                pop_info$argument = arg;
+            }
+            else if ( command == "DELE" ) {
+                pop_info$argument = arg;
+                print fmt("[POP3] Message Deletion: %s", arg);
+            }
+            
+            Log::write(MailActivity::POP_LOG, pop_info);
+        }
+    }
+    
+    # 处理USER命令，记录用户信息到内容聚焦会话
     if ( command == "USER" ) {
-        info$user = arg;
+        # 为后续的RETR会话预设用户信息
+        # 这里我们可以创建一个临时记录来存储用户信息
         print fmt("[POP3] User Login Attempt: %s", arg);
     }
-    else if ( command == "PASS" ) {
-        info$activity = "POP3_PASS";
-        print fmt("[POP3] Password Authentication");
-    }
-    else if ( command == "RETR" ) {
-        info$argument = arg;
-        print fmt("[POP3] Retrieve Message: %s", arg);
-    }
-    
-    Log::write(MailActivity::POP_LOG, info);
 }
 
 event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
 {
-    if ( is_orig || ! MailActivity::enable_pop3_log )
+    if ( is_orig )
         return;
     
-    local info: MailActivity::PopInfo = [
-        $ts = network_time(),
-        $uid = c$uid,
-        $id = c$id,
-        $activity = fmt("POP3_%s_REPLY", cmd),
-        $status = msg
-    ];
-    
-    if ( /^\+OK/ in msg ) {
-        print fmt("[OK] POP3 %s Success: %s", cmd, msg);
+    # 只记录重要的回复到POP3日志（如果启用）
+    if ( MailActivity::enable_pop3_log ) {
+        # 只记录认证结果和重要操作的回复
+        if ( cmd == "USER" || cmd == "PASS" || cmd == "RETR" || cmd == "DELE" ) {
+            local info: MailActivity::PopInfo = [
+                $ts = network_time(),
+                $uid = c$uid,
+                $id = c$id,
+                $activity = fmt("POP3_%s_REPLY", cmd),
+                $status = msg
+            ];
+            
+            if ( /^\+OK/ in msg ) {
+                print fmt("[OK] POP3 %s Success: %s", cmd, msg);
+            }
+            else if ( /^-ERR/ in msg ) {
+                print fmt("[ERROR] POP3 %s Error: %s", cmd, msg);
+            }
+            
+            Log::write(MailActivity::POP_LOG, info);
+        }
     }
-    else if ( /^-ERR/ in msg ) {
-        print fmt("[ERROR] POP3 %s Error: %s", cmd, msg);
+    
+    # 处理USER命令成功回复，更新用户信息
+    if ( cmd == "USER" && /^\+OK/ in msg ) {
+        local uid = c$uid;
+        # 如果有活跃的POP3会话，更新用户信息
+        if ( uid in MailActivity::pop3_sessions ) {
+            # 用户信息将在RETR时设置
+        }
+    }
+}
+
+# POP3数据事件 - 解析邮件头部和内容聚焦
+event pop3_data(c: connection, is_orig: bool, data: string)
+{
+    local uid = c$uid;
+    
+    # 只处理服务器发送的数据（邮件内容）
+    if ( is_orig )
+        return;
+    
+    # 检查是否为RETR会话
+    if ( uid !in MailActivity::pop3_sessions || uid !in MailActivity::pop3_session_states )
+        return;
+    
+    local info = MailActivity::pop3_sessions[uid];
+    local state = MailActivity::pop3_session_states[uid];
+    
+    # 累计接收字节数
+    state$bytes_received += |data|;
+    
+    # 检查是否为消息结束标志（单独的"."行）
+    if ( data == ".\r\n" || data == ".\n" ) {
+        # 消息结束，完成内容聚焦记录
+        info$size_bytes = state$bytes_received;
+        
+        # 写入主要邮件活动日志
+        Log::write(MailActivity::LOG, info);
+        
+        print fmt("[POP3] Message retrieval completed: UID %s, Size: %d bytes", uid, state$bytes_received);
+        
+        # 清理会话数据
+        delete MailActivity::pop3_sessions[uid];
+        delete MailActivity::pop3_session_states[uid];
+        return;
     }
     
-    Log::write(MailActivity::POP_LOG, info);
+    # 如果还在解析头部
+    if ( !state$headers_complete ) {
+        # 检查是否为空行（头部结束标志）
+        if ( data == "\r\n" || data == "\n" ) {
+            state$headers_complete = T;
+            print fmt("[POP3] Header parsing completed for UID: %s", uid);
+            return;
+        }
+        
+        # 解析邮件头部字段
+        if ( /^[Ss]ubject:/ in data ) {
+            info$subject = sub(data, /^[Ss]ubject:\s*/, "");
+            info$subject = sub(info$subject, /\r?\n$/, "");
+        }
+        else if ( /^[Ff]rom:/ in data ) {
+            info$from_header = sub(data, /^[Ff]rom:\s*/, "");
+            info$from_header = sub(info$from_header, /\r?\n$/, "");
+        }
+        else if ( /^[Tt]o:/ in data ) {
+            info$to_header = sub(data, /^[Tt]o:\s*/, "");
+            info$to_header = sub(info$to_header, /\r?\n$/, "");
+        }
+        else if ( /^[Mm]essage-[Ii][Dd]:/ in data ) {
+            info$message_id = sub(data, /^[Mm]essage-[Ii][Dd]:\s*/, "");
+            info$message_id = sub(info$message_id, /\r?\n$/, "");
+        }
+        else if ( /^[Dd]ate:/ in data ) {
+            local date_str = sub(data, /^[Dd]ate:\s*/, "");
+            date_str = sub(date_str, /\r?\n$/, "");
+            info$detail = date_str;
+        }
+    }
 }
