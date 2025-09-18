@@ -3,6 +3,7 @@
 
 @load base/protocols/smtp
 @load base/protocols/pop3
+@load base/protocols/imap
 @load base/protocols/conn
 @load base/protocols/ssl
 redef LogAscii::use_json = T;
@@ -92,6 +93,14 @@ export {
         3465/tcp   # 测试 SMTPS
     } &redef;
 
+    # IMAP 端口
+    const IMAP_PORTS: set[port] = {
+        143/tcp,   # 标准 IMAP
+        993/tcp,   # IMAPS (SSL)
+        3143/tcp,  # 测试端口（GreenMail）
+        3993/tcp   # 测试 IMAPS
+    } &redef;
+
     # POP3 端口（基于现有配置）
     const POP3_PORTS: set[port] = {
         110/tcp,   # 标准 POP3
@@ -117,6 +126,9 @@ export {
     
     # POP3会话跟踪表
     global pop3_sessions: table[string] of Info;
+    
+    # IMAP会话跟踪表
+    global imap_sessions: table[string] of Info;
     
     # POP3会话状态记录
     type Pop3SessionState: record {
@@ -146,7 +158,7 @@ event zeek_init()
     Log::create_stream(MailActivity::LOG, [$columns=MailActivity::Info, $path="mail_activity"]);
     if ( MailActivity::enable_pop3_log )
         Log::create_stream(MailActivity::POP_LOG, [$columns=MailActivity::PopInfo, $path=MailActivity::pop3_log_path]);
-    print "[MAIL] Enhanced Mail Activity Monitor Started (SMTP/POP3)";
+    print "[MAIL] Enhanced Mail Activity Monitor Started (SMTP/POP3/IMAP)";
     schedule MailActivity::report_interval { MailActivity::mail_stats_report() };
 }
 
@@ -162,12 +174,14 @@ event MailActivity::mail_stats_report()
     print "+==============================================================+";
     print fmt("|| [STATS] Mail Traffic Statistics [%s] ||", strftime("%Y-%m-%d %H:%M:%S", current_time()));
     print "+==============================================================+";
-    print fmt("|| SMTP Connections: %d", smtp_connections);
-    print fmt("|| STARTTLS Attempts: %d", starttls_attempts);
-    print fmt("|| STARTTLS Success: %d", starttls_success);
-    print fmt("|| Encrypted Connections: %d", encrypted_connections);
-    if ( starttls_attempts > 0 )
-        print fmt("|| Encryption Success Rate: %.1f%%", (starttls_success * 100.0) / starttls_attempts);
+    print fmt("|| SMTP/POP3/IMAP Connections: %d                          ||", smtp_connections);
+    print fmt("|| STARTTLS Attempts: %d                                   ||", starttls_attempts);
+    print fmt("|| STARTTLS Success: %d                                    ||", starttls_success);
+    print fmt("|| Encrypted Connections: %d                              ||", encrypted_connections);
+    if ( starttls_attempts > 0 ) {
+        local success_rate = (starttls_success * 100) / starttls_attempts;
+        print fmt("|| Encryption Success Rate: %d%%                          ||", success_rate);
+    }
     print "+==============================================================+";
     
     # 重新调度下一次报告
@@ -298,7 +312,7 @@ event smtp_data(c: connection, is_orig: bool, data: string)
 
 event ssl_established(c: connection)
 {
-    if ( c$id$resp_p in MailActivity::SMTP_PORTS || c$id$resp_p in MailActivity::POP3_PORTS ) {
+    if ( c$id$resp_p in MailActivity::SMTP_PORTS || c$id$resp_p in MailActivity::POP3_PORTS || c$id$resp_p in MailActivity::IMAP_PORTS ) {
         ++encrypted_connections;
         
         local uid = c$uid;
@@ -338,21 +352,15 @@ event ssl_established(c: connection)
             if ( c$ssl?$version )
                 tls_info$tls_version = c$ssl$version;
             
-            # 根据端口确定协议类型
-            if ( c$id$resp_p == 465/tcp || c$id$resp_p == 3465/tcp ) {
-                tls_info$protocol = "SMTP";
-                tls_info$activity = "SMTPS_TLS_ESTABLISHED";
-                tls_info$role = "client";
-                print fmt("[SMTPS] Implicit TLS connection established: %s:%d -> %s:%d (TLS: %s)", 
-                          c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, 
-                          c$ssl?$version ? c$ssl$version : "unknown");
-            }
             # 识别协议类型
             local protocol = "UNKNOWN";
             if ( c$id$resp_p in MailActivity::SMTP_PORTS )
                 protocol = "SMTP";
             else if ( c$id$resp_p in MailActivity::POP3_PORTS )
                 protocol = "POP3";
+            else if ( c$id$resp_p in MailActivity::IMAP_PORTS )
+                protocol = "IMAP";
+                
             # 根据端口确定协议类型并记录
             if ( protocol == "SMTP" ) {
                 tls_info$protocol = "SMTP";
@@ -367,6 +375,14 @@ event ssl_established(c: connection)
                 tls_info$activity = "POP3S_TLS_ESTABLISHED";
                 tls_info$role = "client";
                 print fmt("[POP3S] Implicit TLS connection established: %s:%d -> %s:%d (TLS: %s)", 
+                          c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, 
+                          c$ssl?$version ? c$ssl$version : "unknown");
+            }
+            else if ( protocol == "IMAP" ) {
+                tls_info$protocol = "IMAP";
+                tls_info$activity = "IMAPS_TLS_ESTABLISHED";
+                tls_info$role = "client";
+                print fmt("[IMAPS] Implicit TLS connection established: %s:%d -> %s:%d (TLS: %s)", 
                           c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, 
                           c$ssl?$version ? c$ssl$version : "unknown");
             }
@@ -506,6 +522,12 @@ event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
     }
 }
 
+# ========== IMAP 监控 ==========
+# 注意：Zeek的IMAP协议分析器只支持StartTLS功能，没有提供imap_request和imap_reply事件
+# 我们通过连接跟踪和TLS事件来监控IMAP活动
+
+# IMAP连接通过ssl_established事件和端口识别来处理
+
 event connection_state_remove(c: connection)
 {
     local uid = c$uid;
@@ -516,6 +538,15 @@ event connection_state_remove(c: connection)
         Log::write(MailActivity::LOG, info);
         delete MailActivity::smtp_sessions[uid];
         print fmt("[SMTP] Connection Ended: %s", uid);
+    }
+    
+    # 清理 IMAP 会话数据
+    if ( uid in MailActivity::imap_sessions ) {
+        local imap_info = MailActivity::imap_sessions[uid];
+        imap_info$activity = "IMAP_CONNECTION_END";
+        Log::write(MailActivity::LOG, imap_info);
+        delete MailActivity::imap_sessions[uid];
+        print fmt("[IMAP] Connection ended: %s", uid);
     }
     
     # 处理 POP3 会话
