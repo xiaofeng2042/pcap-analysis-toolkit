@@ -12,7 +12,7 @@ IFACE=$1
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 OUTPUT_DIR=${2:-"$ROOT_DIR/output/live-$(date +%Y%m%d-%H%M%S)"}
 SCRIPT="$ROOT_DIR/zeek-scripts/mail-activity-json.zeek"
-FILTER=${FILTER:-"port 25 or port 465 or port 587 or port 110 or port 995 or port 1025 or port 1110"}
+FILTER=${FILTER:-"port 25 or port 465 or port 587 or port 110 or port 995 or port 1025 or port 1110 or port 3025 or port 3110"}
 
 mkdir -p "$OUTPUT_DIR"
 

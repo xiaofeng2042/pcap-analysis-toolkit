@@ -58,10 +58,10 @@ Need a fake mailbox? A minimal [GreenMail](https://www.icegreen.com/greenmail/) 
 
 ```bash
 docker compose -f docker/greenmail/docker-compose.yml up -d
-# SMTP available at localhost:1025, POP3 at localhost:1110 (user demo/demo)
+# SMTP available at localhost:3025, POP3 at localhost:3110 (user demo/demo)
 ```
 
-Keep `run-live.sh` running with the default filter to capture this traffic, then send mail via `localhost:1025` (e.g. `swaks`) and retrieve with any POP3 client against `localhost:1110`.
+Keep `run-live.sh` running with the default filter to capture this traffic, then send mail via `localhost:3025` (e.g. `swaks`) and retrieve with any POP3 client against `localhost:3110`.
 
 ## 5. Notes
 - Generated logs land in `output/` and are already ignored by Git.
