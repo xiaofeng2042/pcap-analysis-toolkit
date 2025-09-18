@@ -66,16 +66,18 @@ if [[ "$USE_DOCKER" == "true" ]]; then
     exit 1
   fi
   
-  # Run Zeek in Docker container with necessary privileges and network access
+  # 运行 Docker 容器（使用宿主机网络和必要特权）
   docker run -it --rm \
+    --name zeek-mail-monitor \
     --net=host \
+    --privileged \
     --cap-add=NET_ADMIN \
     --cap-add=NET_RAW \
     -v "$OUTPUT_DIR:/logs" \
-    -v "$SCRIPT:/zeek-script.zeek:ro" \
+    -v "$ROOT_DIR/zeek-scripts:/scripts" \
     -w /logs \
     zeek/zeek \
-    zeek -C -i "$IFACE" -f "$FILTER" /zeek-script.zeek
+    zeek -C -i "$IFACE" -f "$FILTER" /scripts/mail-activity-json.zeek
 else
   echo "[INFO] Starting native Zeek on interface $IFACE (Ctrl-C to stop)"
   
