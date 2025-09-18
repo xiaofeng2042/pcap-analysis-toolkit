@@ -1,7 +1,7 @@
 # 邮件监控项目规则
 
 ## 项目概述
-本项目使用 Zeek 进行邮件协议（SMTP/POP3）的网络流量监控和分析。所有修改应基于现有配置和脚本进行，避免代码变得混乱。
+本项目使用 Zeek 进行邮件协议（SMTP/POP3/IMAP）的网络流量监控和分析。采用模块化架构，主文件负责导出定义，子模块实现具体协议处理逻辑。所有修改应基于现有模块化结构进行。
 
 ## 核心原则
 
@@ -12,8 +12,9 @@
 - **避免功能分散到多个文件**
 
 ### 2. 代码维护规范
-- 所有增强功能应集成到 `zeek-scripts/mail-activity-json.zeek` 中
-- 删除不再使用的重复脚本文件
+- **主文件职责**：`zeek-scripts/mail-activity-json.zeek` 负责模块导出和子模块加载
+- **子模块职责**：`zeek-scripts/mail-activity/*.zeek` 实现具体协议处理逻辑
+- **协议支持**：SMTP（基于内置事件）、POP3（增强业务逻辑）、IMAP（自定义TCP解析）
 - 保持配置参数的一致性和可维护性
 - 使用统一的命名规范和代码风格
 
@@ -211,13 +212,20 @@ const report_interval = 30sec &redef;
 - 使用现有测试脚本：`scripts/test-smtp.sh`, `scripts/test-pop3.sh`
 - 测试结果验证：检查 `output/` 目录下的日志文件
 - 功能测试覆盖：简单邮件、附件邮件、HTML 邮件、批量邮件
+- **禁止使用 `zeek -p` 进行语法验证**：使用实际运行测试来验证功能
 
 ## 文件组织规则
 
 ### 核心文件结构
 ```
 zeek-scripts/
-└── mail-activity-json.zeek    # 主监控脚本（所有功能集中）
+├── mail-activity-json.zeek    # 主监控脚本（入口文件）
+└── mail-activity/              # 模块化子脚本目录
+    ├── utils.zeek              # 工具函数和TLS处理
+    ├── smtp.zeek               # SMTP协议处理
+    ├── pop3.zeek               # POP3协议处理（增强版）
+    ├── imap.zeek               # IMAP协议处理（自定义实现）
+    └── logging.zeek            # 日志记录功能
 
 scripts/
 ├── run-live.sh               # 实时监控启动
@@ -241,10 +249,18 @@ output/
 - ❌ 创建不必要的配置文件
 
 ### 推荐的操作
-- ✅ 在现有脚本中添加新功能
-- ✅ 扩展现有数据结构
+- ✅ 使用模块化结构组织代码（mail-activity-json.zeek 作为入口）
+- ✅ 在子模块中实现具体协议逻辑
+- ✅ 扩展现有数据结构和导出定义
 - ✅ 优化现有事件处理逻辑
 - ✅ 增强现有统计功能
+
+### 模块化开发规范
+- **主文件**：`mail-activity-json.zeek` 负责导出定义（类型、常量、全局变量）
+- **子模块**：`mail-activity/*.zeek` 实现具体协议处理逻辑
+- **加载顺序**：utils → smtp → pop3 → imap，避免循环依赖
+- **避免重复定义**：所有导出定义集中在主文件中
+- **功能验证**：使用 `./scripts/run-offline.sh` 进行实际测试
 
 ## 版本控制规则
 
