@@ -96,6 +96,8 @@ event pop3_request(c: connection, is_orig: bool, command: string, arg: string)
 
     if ( command == "USER" )
         info$user = arg;
+    else if ( command == "PASS" )
+        info$detail = "<hidden>";
     else if ( command == "RETR" )
         info$detail = fmt("retrieve message %s", arg);
     else if ( command == "LIST" || command == "STAT" )
@@ -114,8 +116,9 @@ event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
     if ( c$id$resp_p !in POP3_PORTS )
         return;
 
-    local info = new_info(c, "POP3", "receive", fmt("POP3_REPLY_%s", cmd));
-    info$status = "+OK" in msg ? "+OK" : msg;
+    local label = cmd != "" ? cmd : "POP3_REPLY";
+    local info = new_info(c, "POP3", "receive", fmt("POP3_REPLY_%s", cmd == "" ? "GENERIC" : cmd));
+    info$status = label;
     if ( msg != "" )
         info$detail = msg;
 

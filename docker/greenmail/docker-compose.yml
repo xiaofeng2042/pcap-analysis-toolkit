@@ -1,28 +1,13 @@
-version: '3.8'
-
 services:
   greenmail:
-    image: greenmail/standalone:1.6.14
-    container_name: greenmail-server
-    ports:
-      - "3025:3025"  # SMTP (non-TLS)
-      - "3110:3110"  # POP3
-      - "3143:3143"  # IMAP
-      - "3465:3465"  # SMTPS (SSL)
-      - "3993:3993"  # IMAPS (SSL)
-      - "3995:3995"  # POP3S (SSL)
-    environment:
-      - GREENMAIL_USERS=test@local:secret,admin@local:admin123
-      - GREENMAIL_OPTS=-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled=false
-    volumes:
-      - greenmail_data:/opt/greenmail/data
-    networks:
-      - mail_network
+    image: greenmail/standalone:1.6.15
     restart: unless-stopped
-
-volumes:
-  greenmail_data:
-
-networks:
-  mail_network:
-    driver: bridge
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup=SMTP:3025,POP3:3110
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=demo:demo@local
+        -Dgreenmail.start.tls=false
+    ports:
+      - "1025:3025"   # SMTP (mapped to localhost:1025)
+      - "1110:3110"   # POP3 (mapped to localhost:1110)
