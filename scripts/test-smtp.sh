@@ -10,11 +10,21 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# 配置参数
-SMTP_SERVER="localhost"
-SMTP_PORT="3025"
-FROM_ADDR="test@localhost.local"
-TO_ADDR="demo@localhost.local"
+# 配置参数 - 支持本地和远程服务器
+# 使用环境变量或默认值
+SMTP_SERVER="${SMTP_SERVER:-localhost}"
+SMTP_PORT="${SMTP_PORT:-3025}"
+FROM_ADDR="${FROM_ADDR:-test@localhost.local}"
+TO_ADDR="${TO_ADDR:-demo@localhost.local}"
+
+# 远程服务器快速配置
+if [[ "$1" == "remote" || "$1" == "192.168.1.198" ]]; then
+    SMTP_SERVER="192.168.1.198"
+    SMTP_PORT="25"  # 标准SMTP端口
+    FROM_ADDR="test@example.com"
+    TO_ADDR="demo@example.com"
+    echo -e "${YELLOW}[INFO] 使用远程服务器配置: $SMTP_SERVER:$SMTP_PORT${NC}"
+fi
 
 echo -e "${BLUE}=== SMTP 邮件发送测试 ===${NC}"
 echo "服务器: $SMTP_SERVER:$SMTP_PORT"
