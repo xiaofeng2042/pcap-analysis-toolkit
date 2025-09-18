@@ -51,27 +51,94 @@ const POP3_PORTS: set[port] = {
 - **必需字段**：`ts`, `uid`, `id`, `protocol`, `role`, `activity`
 - **可选字段**：`subject`, `from_header`, `to_header`, `message_id`, `tls_version`
 
-#### 日志记录规范
+#### SMTP 标准日志格式
+基于 Zeek 内置 SMTP 分析器的标准格式，支持明文和密文邮件监控：
+
+**明文SMTP日志示例**：
+```json
+{
+   "ts": 1254722768.219663,
+   "uid": "C1qe8w3QHRF2N5tVV5",
+   "id.orig_h": "10.10.1.4",
+   "id.orig_p": 1470,
+   "id.resp_h": "74.53.140.153",
+   "id.resp_p": 25,
+   "trans_depth": 1,
+   "helo": "GP",
+   "mailfrom": "gurpartap@patriots.in",
+   "rcptto": ["raj_deol2002in@yahoo.co.in"],
+   "date": "Mon, 5 Oct 2009 11:36:07 +0530",
+   "from": "\"Gurpartap Singh\" <gurpartap@patriots.in>",
+   "to": ["<raj_deol2002in@yahoo.co.in>"],
+   "msg_id": "<000301ca4581$ef9e57f0$cedb07d0$@in>",
+   "subject": "SMTP",
+   "last_reply": "250 OK id=1Mugho-0003Dg-Un",
+   "path": ["74.53.140.153", "10.10.1.4"],
+   "user_agent": "Microsoft Office Outlook 12.0",
+   "tls": false,
+   "fuids": ["Fel9gs4OtNEV6gUJZ5", "Ft4M3f2yMvLlmwtbq9", "FL9Y0d45OI4LpS6fmh"]
+}
+```
+
+**密文SMTP日志示例**：
+```json
+{
+   "ts": "2020-08-09T23:31:46.696892Z",
+   "uid": "CCqmLfIrqQeWvXol4",
+   "id.orig_h": "192.168.4.41",
+   "id.orig_p": 49334,
+   "id.resp_h": "17.42.251.41",
+   "id.resp_p": 587,
+   "trans_depth": 1,
+   "helo": "[192.168.4.41]",
+   "last_reply": "220 2.0.0 Ready to start TLS",
+   "path": ["17.42.251.41", "192.168.4.41"],
+   "tls": true,
+   "fuids": [],
+   "is_webmail": false
+}
+```
+
+#### 标准日志记录结构
 ```zeek
-# 标准日志记录结构
 type Info: record {
-    # 基础字段（必需）
+    # 基础连接信息（必需）
     ts: time &log;
     uid: string &log;
     id: conn_id &log;
-    protocol: string &log;        # "SMTP" 或 "POP3"
-    role: string &log;            # "send" 或 "receive"
-    activity: string &log;        # 具体活动类型
     
-    # 邮件信息字段（可选）
+    # SMTP 标准字段
+    trans_depth: count &log &optional;
+    helo: string &log &optional;
+    mailfrom: string &log &optional;
+    rcptto: vector of string &log &optional;
+    date: string &log &optional;
+    from: string &log &optional;
+    to: vector of string &log &optional;
+    cc: vector of string &log &optional;
+    reply_to: string &log &optional;
+    msg_id: string &log &optional;
+    in_reply_to: string &log &optional;
+    subject: string &log &optional;
+    x_originating_ip: string &log &optional;
+    first_received: string &log &optional;
+    second_received: string &log &optional;
+    last_reply: string &log &optional;
+    path: vector of addr &log &optional;
+    user_agent: string &log &optional;
+    tls: bool &log &optional;
+    fuids: vector of string &log &optional;
+    is_webmail: bool &log &optional;
+    
+    # 兼容性字段（保留原有功能）
+    protocol: string &log &optional;
+    role: string &log &optional;
+    activity: string &log &optional;
     mail_from: string &log &optional;
     rcpt_to: string &log &optional;
     user: string &log &optional;
     status: string &log &optional;
     detail: string &log &optional;
-    
-    # 增强字段（可选）
-    subject: string &log &optional;
     from_header: string &log &optional;
     to_header: string &log &optional;
     message_id: string &log &optional;
@@ -79,6 +146,13 @@ type Info: record {
     attachment_count: count &log &optional;
 };
 ```
+
+#### 日志格式要求
+- **必需字段**：`ts`, `uid`, `id`
+- **SMTP核心字段**：`trans_depth`, `helo`, `mailfrom`, `rcptto`, `tls`
+- **邮件内容字段**：`subject`, `from`, `to`, `msg_id`, `date`
+- **TLS加密字段**：`tls` (boolean), `last_reply`
+- **文件关联字段**：`fuids` (文件唯一标识符数组)
 
 ## 监控规则
 
