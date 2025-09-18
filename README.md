@@ -64,6 +64,11 @@ docker compose -f docker/greenmail/docker-compose.yml up -d
 
 Keep `run-live.sh` running with the default filter to capture this traffic, then send mail via `localhost:3025` (e.g. `swaks`) and retrieve with any POP3 client against `localhost:3110`.
 
-## 5. Notes
+## 5. Verification Status
+✅ **SMTP Monitoring Verified** - Successfully tested on Rocky Linux target machine (Tag: `v1.0-smtp-verified`)
+
+The SMTP monitoring functionality has been successfully verified and tested on a Rocky Linux target machine. The Zeek scripts can properly capture and log SMTP traffic in JSON format.
+
+## 6. Notes
 - Generated logs land in `output/` and are already ignored by Git.
 - If you still have legacy files owned by `root` (e.g. older Zeek runs), remove them manually with `sudo rm` so the directory tree stays clean.
