@@ -1,11 +1,36 @@
 #!/usr/bin/env bash
 # Start a live Zeek capture for SMTP/POP3/IMAP traffic with JSON logging.
+# Supports both native Zeek installation and Docker-based execution.
 
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
-  echo "Usage: sudo $0 <interface> [output-dir]" >&2
+# Function to show usage
+show_usage() {
+  echo "Usage: $0 [--docker] <interface> [output-dir]" >&2
+  echo "" >&2
+  echo "Options:" >&2
+  echo "  --docker    Run Zeek in Docker container (requires Docker)" >&2
+  echo "" >&2
+  echo "Arguments:" >&2
+  echo "  interface   Network interface to capture (e.g., eth0, en0)" >&2
+  echo "  output-dir  Output directory for logs (optional)" >&2
+  echo "" >&2
+  echo "Examples:" >&2
+  echo "  sudo $0 eth0                    # Native Zeek" >&2
+  echo "  sudo $0 --docker eth0           # Docker Zeek" >&2
+  echo "  sudo $0 --docker eth0 /tmp/logs # Docker with custom output" >&2
   exit 1
+}
+
+# Parse arguments
+USE_DOCKER=false
+if [[ $# -gt 0 && "$1" == "--docker" ]]; then
+  USE_DOCKER=true
+  shift
+fi
+
+if [[ $# -lt 1 ]]; then
+  show_usage
 fi
 
 IFACE=$1
@@ -22,9 +47,45 @@ FILTER=${FILTER:-"port 25 or port 465 or port 587 or port 1025 or port 2525 or p
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "[*] Writing logs to $OUTPUT_DIR"
-echo "[*] Capture filter: $FILTER"
-echo "[*] Starting Zeek on interface $IFACE (Ctrl-C to stop)"
+echo "[INFO] Writing logs to $OUTPUT_DIR"
+echo "[INFO] Capture filter: $FILTER"
 
-cd "$OUTPUT_DIR"
-zeek -C -i "$IFACE" -f "$FILTER" "$SCRIPT"
+if [[ "$USE_DOCKER" == "true" ]]; then
+  echo "[INFO] Starting Zeek in Docker container on interface $IFACE (Ctrl-C to stop)"
+  echo "[INFO] Using Docker image: zeek/zeek"
+  
+  # Check if Docker is available
+  if ! command -v docker &> /dev/null; then
+    echo "[ERROR] Docker is not installed or not in PATH" >&2
+    exit 1
+  fi
+  
+  # Check if Docker daemon is running
+  if ! docker info &> /dev/null; then
+    echo "[ERROR] Docker daemon is not running" >&2
+    exit 1
+  fi
+  
+  # Run Zeek in Docker container with necessary privileges and network access
+  docker run -it --rm \
+    --net=host \
+    --cap-add=NET_ADMIN \
+    --cap-add=NET_RAW \
+    -v "$OUTPUT_DIR:/logs" \
+    -v "$SCRIPT:/zeek-script.zeek:ro" \
+    -w /logs \
+    zeek/zeek \
+    zeek -C -i "$IFACE" -f "$FILTER" /zeek-script.zeek
+else
+  echo "[INFO] Starting native Zeek on interface $IFACE (Ctrl-C to stop)"
+  
+  # Check if Zeek is available
+  if ! command -v zeek &> /dev/null; then
+    echo "[ERROR] Zeek is not installed or not in PATH" >&2
+    echo "[INFO] Try using --docker option to run with Docker" >&2
+    exit 1
+  fi
+  
+  cd "$OUTPUT_DIR"
+  zeek -C -i "$IFACE" -f "$FILTER" "$SCRIPT"
+fi
