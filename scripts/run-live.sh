@@ -21,4 +21,4 @@ echo "[*] Capture filter: $FILTER"
 echo "[*] Starting Zeek on interface $IFACE (Ctrl-C to stop)"
 
 cd "$OUTPUT_DIR"
-zeek -i "$IFACE" -f "$FILTER" "$SCRIPT"
+zeek -C -i "$IFACE" -f "$FILTER" "$SCRIPT"
