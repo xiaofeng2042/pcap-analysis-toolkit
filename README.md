@@ -41,10 +41,10 @@ Capture real traffic on an interface (requires root privileges). Example:
 sudo ./scripts/run-live.sh en0
 ```
 
-Environment variable `FILTER` can override the default BPF (`port 25 or port 465 or port 587 or port 110 or port 995`). Logs appear under `output/live-<timestamp>/mail_activity.log`.
+Environment variable `FILTER` can override the default BPF (`port 25 or port 465 or port 587 or port 110 or port 995`). Logs appear under `output/live-<timestamp>/mail_activity.log` and `output/live-<timestamp>/pop3.log` (POP3 logging is enabled by default).
 
 ## 3. Log format
-`zeek-scripts/mail-activity-json.zeek` forces JSON output and writes a single `mail_activity.log` stream with the fields below:
+`zeek-scripts/mail-activity-json.zeek` forces JSON output and writes a detailed `mail_activity.log` stream plus an optional `pop3.log` (enabled by default) with the fields below:
 
 - `protocol`: `SMTP` or `POP3`
 - `role`: `send` (SMTP client) or `receive` (POP3 client)
@@ -52,6 +52,7 @@ Environment variable `FILTER` can override the default BPF (`port 25 or port 465
 - `mail_from`, `rcpt_to`, `user`: key identifiers captured when present
 - `status`, `detail`: response codes / textual context
 - `ts`, `uid`, and Zeek connection identifiers for correlation
+- `pop3.log`: captures each POP3 request/reply in a lightweight schema (`event`, `user`, `argument`, `status`, `detail`) to mirror the classic Zeek POP3 log; toggle with `redef MailActivity::enable_pop3_log=F` or change the filename via `redef MailActivity::pop3_log_path="pop"`.
 
 ## 4. Optional: Local test server
 Need a fake mailbox? A minimal [GreenMail](https://www.icegreen.com/greenmail/) setup is included for SMTP + POP3.

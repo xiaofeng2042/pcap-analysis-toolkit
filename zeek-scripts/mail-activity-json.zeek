@@ -56,6 +56,22 @@ export {
     };
 
     redef enum Log::ID += { LOG };
+
+    option enable_pop3_log: bool = T &redef;
+    option pop3_log_path: string = "pop3" &redef;
+
+    type PopInfo: record {
+        ts: time &log;
+        uid: string &log;
+        id: conn_id &log;
+        event: string &log;
+        user: string &log &optional;
+        argument: string &log &optional;
+        status: string &log &optional;
+        detail: string &log &optional;
+    };
+
+    redef enum Log::ID += { POP_LOG };
 }
 
 const SMTP_PORTS: set[port] = {
@@ -85,6 +101,8 @@ global smtp_sessions: table[string] of Info;
 event zeek_init()
 {
     Log::create_stream(LOG, [$columns=Info, $path="mail_activity"]);
+    if ( enable_pop3_log )
+        Log::create_stream(POP_LOG, [$columns=PopInfo, $path=pop3_log_path]);
     print "[MAIL] Enhanced Mail Activity Monitor Started";
     schedule report_interval { mail_stats_report() };
 }
@@ -108,6 +126,14 @@ function new_info(c: connection, proto: string, role: string, ev: string): Info
             $protocol = proto,
             $role = role,
             $activity = ev];
+}
+
+function new_pop_info(c: connection, ev: string): PopInfo
+{
+    return [$ts = network_time(),
+            $uid = c$uid,
+            $id = c$id,
+            $event = ev];
 }
 
 event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
@@ -300,6 +326,20 @@ event pop3_request(c: connection, is_orig: bool, command: string, arg: string)
     }
 
     Log::write(LOG, info);
+
+    if ( enable_pop3_log )
+    {
+        local pop = new_pop_info(c, command);
+
+        if ( command == "USER" )
+            pop$user = arg;
+        else if ( command == "PASS" )
+            pop$argument = "<hidden>";
+        else if ( arg != "" )
+            pop$argument = arg;
+
+        Log::write(POP_LOG, pop);
+    }
 }
 
 event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
@@ -322,6 +362,15 @@ event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
     }
 
     Log::write(LOG, info);
+
+    if ( enable_pop3_log )
+    {
+        local pop = new_pop_info(c, fmt("REPLY_%s", cmd == "" ? "GENERIC" : cmd));
+        pop$status = label;
+        if ( msg != "" )
+            pop$detail = msg;
+        Log::write(POP_LOG, pop);
+    }
 }
 
 # 新增：SSL建立事件
@@ -368,6 +417,14 @@ event connection_state_remove(c: connection)
         
         print fmt("[STATS] POP3 Connection Closed: %s:%d (Duration: %.2fs, Data: %d/%d bytes)", 
                  c$id$orig_h, c$id$orig_p, c$duration, c$orig$size, c$resp$size);
+
+        if ( enable_pop3_log )
+        {
+            local pop_end = new_pop_info(c, "CONNECTION_END");
+            pop_end$status = "closed";
+            pop_end$detail = fmt("duration %.2fs, size %d/%d", c$duration, c$orig$size, c$resp$size);
+            Log::write(POP_LOG, pop_end);
+        }
     }
 }
 
