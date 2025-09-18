@@ -1,5 +1,5 @@
 # mail-activity-json.zeek
-# Enhanced Zeek script to record detailed SMTP send activity and POP3 retrieval events.
+# Enhanced Zeek script to record detailed SMTP/POP3 send activity and retrieval events.
 
 @load base/protocols/smtp
 @load base/protocols/pop3
@@ -81,14 +81,23 @@ export {
 
     redef enum Log::ID += { POP_LOG };
     
-    # 全局常量定义
+    # SMTP 端口（基于现有配置）
     const SMTP_PORTS: set[port] = {
-        25/tcp, 465/tcp, 587/tcp, 2525/tcp, 1025/tcp,
-        3025/tcp, 3465/tcp
+        25/tcp,    # 标准 SMTP
+        465/tcp,   # SMTPS (SSL)
+        587/tcp,   # SMTP 提交端口
+        2525/tcp,  # 备用 SMTP
+        1025/tcp,  # 非标准端口
+        3025/tcp,  # 测试端口（GreenMail）
+        3465/tcp   # 测试 SMTPS
     } &redef;
 
+    # POP3 端口（基于现有配置）
     const POP3_PORTS: set[port] = {
-        110/tcp, 995/tcp, 3110/tcp, 3995/tcp
+        110/tcp,   # 标准 POP3
+        995/tcp,   # POP3S (SSL)
+        3110/tcp,  # 测试端口（GreenMail）
+        3995/tcp   # 测试 POP3S
     } &redef;
 
     # 报告间隔
@@ -126,10 +135,18 @@ event zeek_init()
     starttls_attempts = 0;
     starttls_success = 0;
     encrypted_connections = 0;
+    
+    # 注册非标准端口到相应的协议分析器
+    # 注册 POP3 非标准端口
+    Analyzer::register_for_ports(Analyzer::ANALYZER_POP3, MailActivity::POP3_PORTS);
+    
+    # 注册 SMTP 非标准端口
+    Analyzer::register_for_ports(Analyzer::ANALYZER_SMTP, MailActivity::SMTP_PORTS);
+    
     Log::create_stream(MailActivity::LOG, [$columns=MailActivity::Info, $path="mail_activity"]);
     if ( MailActivity::enable_pop3_log )
         Log::create_stream(MailActivity::POP_LOG, [$columns=MailActivity::PopInfo, $path=MailActivity::pop3_log_path]);
-    print "[MAIL] Enhanced Mail Activity Monitor Started";
+    print "[MAIL] Enhanced Mail Activity Monitor Started (SMTP/POP3)";
     schedule MailActivity::report_interval { MailActivity::mail_stats_report() };
 }
 
@@ -285,6 +302,16 @@ event ssl_established(c: connection)
         ++encrypted_connections;
         
         local uid = c$uid;
+        local tls_info: MailActivity::Info;
+        local is_implicit_tls = F;
+        
+        # 检查是否为隐式 TLS 端口
+        if ( c$id$resp_p == 465/tcp || c$id$resp_p == 993/tcp || c$id$resp_p == 995/tcp ||
+             c$id$resp_p == 3465/tcp || c$id$resp_p == 3993/tcp || c$id$resp_p == 3995/tcp ) {
+            is_implicit_tls = T;
+        }
+        
+        # 处理现有会话的 TLS 升级
         if ( uid in MailActivity::smtp_sessions ) {
             local info = MailActivity::smtp_sessions[uid];
             info$tls = T;
@@ -293,8 +320,7 @@ event ssl_established(c: connection)
                 info$tls_version = c$ssl$version;
             Log::write(MailActivity::LOG, info);
         }
-        
-        if ( uid in MailActivity::pop3_sessions ) {
+        else if ( uid in MailActivity::pop3_sessions ) {
             local pop_info = MailActivity::pop3_sessions[uid];
             pop_info$tls = T;
             pop_info$encrypted = T;
@@ -302,22 +328,55 @@ event ssl_established(c: connection)
                 pop_info$tls_version = c$ssl$version;
             MailActivity::pop3_sessions[uid] = pop_info;
         }
+        # 处理隐式 TLS 连接（从连接开始就是加密的）
+        else if ( is_implicit_tls ) {
+            tls_info = new_smtp_info(c);
+            tls_info$tls = T;
+            tls_info$encrypted = T;
+            tls_info$is_webmail = F;
+            
+            if ( c$ssl?$version )
+                tls_info$tls_version = c$ssl$version;
+            
+            # 根据端口确定协议类型
+            if ( c$id$resp_p == 465/tcp || c$id$resp_p == 3465/tcp ) {
+                tls_info$protocol = "SMTP";
+                tls_info$activity = "SMTPS_TLS_ESTABLISHED";
+                tls_info$role = "client";
+                print fmt("[SMTPS] Implicit TLS connection established: %s:%d -> %s:%d (TLS: %s)", 
+                          c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, 
+                          c$ssl?$version ? c$ssl$version : "unknown");
+            }
+            # 识别协议类型
+            local protocol = "UNKNOWN";
+            if ( c$id$resp_p in MailActivity::SMTP_PORTS )
+                protocol = "SMTP";
+            else if ( c$id$resp_p in MailActivity::POP3_PORTS )
+                protocol = "POP3";
+            # 根据端口确定协议类型并记录
+            if ( protocol == "SMTP" ) {
+                tls_info$protocol = "SMTP";
+                tls_info$activity = "SMTPS_TLS_ESTABLISHED";
+                tls_info$role = "client";
+                print fmt("[SMTPS] Implicit TLS connection established: %s:%d -> %s:%d (TLS: %s)", 
+                          c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, 
+                          c$ssl?$version ? c$ssl$version : "unknown");
+            }
+            else if ( protocol == "POP3" ) {
+                tls_info$protocol = "POP3";
+                tls_info$activity = "POP3S_TLS_ESTABLISHED";
+                tls_info$role = "client";
+                print fmt("[POP3S] Implicit TLS connection established: %s:%d -> %s:%d (TLS: %s)", 
+                          c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, 
+                          c$ssl?$version ? c$ssl$version : "unknown");
+            }
+            
+            # 记录隐式 TLS 连接
+            Log::write(MailActivity::LOG, tls_info);
+        }
         
         print fmt("[TLS] SSL/TLS Connection Established: %s:%d -> %s:%d", 
                   c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p);
-    }
-}
-
-event connection_state_remove(c: connection)
-{
-    local uid = c$uid;
-    
-    if ( uid in MailActivity::smtp_sessions ) {
-        local info = MailActivity::smtp_sessions[uid];
-        info$activity = "SMTP_CONNECTION_END";
-        Log::write(MailActivity::LOG, info);
-        delete MailActivity::smtp_sessions[uid];
-        print fmt("[SMTP] Connection Ended: %s", uid);
     }
 }
 
@@ -444,6 +503,28 @@ event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
         if ( uid in MailActivity::pop3_sessions ) {
             # 用户信息将在RETR时设置
         }
+    }
+}
+
+event connection_state_remove(c: connection)
+{
+    local uid = c$uid;
+    
+    if ( uid in MailActivity::smtp_sessions ) {
+        local info = MailActivity::smtp_sessions[uid];
+        info$activity = "SMTP_CONNECTION_END";
+        Log::write(MailActivity::LOG, info);
+        delete MailActivity::smtp_sessions[uid];
+        print fmt("[SMTP] Connection Ended: %s", uid);
+    }
+    
+    # 处理 POP3 会话
+    if ( uid in MailActivity::pop3_sessions ) {
+        local pop_info = MailActivity::pop3_sessions[uid];
+        pop_info$activity = "POP3_CONNECTION_END";
+        Log::write(MailActivity::LOG, pop_info);
+        delete MailActivity::pop3_sessions[uid];
+        print fmt("[POP3] Connection ended: %s", uid);
     }
 }
 
