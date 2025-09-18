@@ -18,9 +18,9 @@ USERNAME="${USERNAME:-demo}"
 PASSWORD="${PASSWORD:-demo}"
 
 # 远程服务器快速配置
-if [[ "$1" == "remote" || "$1" == "192.168.1.198" ]]; then
-    POP3_SERVER="192.168.1.198"
-    POP3_PORT="110"  # 标准POP3端口
+if [[ "$1" == "remote" || "$1" == "192.168.1.189" ]]; then
+    POP3_SERVER="192.168.1.189"
+    POP3_PORT="3110"  # 标准POP3端口
     USERNAME="testuser"
     PASSWORD="testpass"
     echo -e "${YELLOW}[INFO] 使用远程服务器配置: $POP3_SERVER:$POP3_PORT${NC}"

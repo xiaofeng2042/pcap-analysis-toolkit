@@ -18,9 +18,9 @@ FROM_ADDR="${FROM_ADDR:-test@localhost.local}"
 TO_ADDR="${TO_ADDR:-demo@localhost.local}"
 
 # 远程服务器快速配置
-if [[ "$1" == "remote" || "$1" == "192.168.1.198" ]]; then
-    SMTP_SERVER="192.168.1.198"
-    SMTP_PORT="25"  # 标准SMTP端口
+if [[ "$1" == "remote" || "$1" == "192.168.1.189" ]]; then
+    SMTP_SERVER="192.168.1.189"
+    SMTP_PORT="3025"  # 标准SMTP端口
     FROM_ADDR="test@example.com"
     TO_ADDR="demo@example.com"
     echo -e "${YELLOW}[INFO] 使用远程服务器配置: $SMTP_SERVER:$SMTP_PORT${NC}"
