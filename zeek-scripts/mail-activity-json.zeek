@@ -1,5 +1,5 @@
 # mail-activity-json.zeek
-# Enhanced Zeek script to record detailed SMTP/POP3 send activity and retrieval events.
+# Enhanced Zeek script to record detailed SMTP/POP3/IMAP send activity and retrieval events.
 
 @load base/protocols/smtp
 @load base/protocols/pop3
@@ -46,6 +46,19 @@ export {
         mailbox_host: string &log &optional;     # 邮箱服务器主机
         size_bytes: count &log &optional;        # 邮件大小（字节）
         encrypted: bool &log &optional;          # 是否加密传输
+        
+        # IMAP 特有字段
+        imap_tag: string &log &optional;         # IMAP 命令标签
+        imap_command: string &log &optional;     # IMAP 命令类型
+        imap_arguments: string &log &optional;   # IMAP 命令参数
+        imap_response: string &log &optional;    # IMAP 服务器响应
+        imap_status: string &log &optional;      # IMAP 响应状态 (OK/NO/BAD)
+        
+        # POP3 特有字段
+        pop3_command: string &log &optional;     # POP3 命令类型
+        pop3_arguments: string &log &optional;   # POP3 命令参数
+        pop3_response: string &log &optional;    # POP3 服务器响应
+        pop3_status: string &log &optional;      # POP3 响应状态 (+OK/-ERR)
         
         # 兼容性字段（保留原有功能）
         protocol: string &log &optional;
@@ -130,6 +143,10 @@ export {
     # IMAP会话跟踪表
     global imap_sessions: table[string] of Info;
     
+    # IMAP 缓冲区和状态管理
+    global imap_buffers: table[string] of string;
+    global imap_pending: table[string] of vector of string;
+    
     # POP3会话状态记录
     type Pop3SessionState: record {
         message_number: count &optional;    # 当前检索的消息编号
@@ -138,6 +155,157 @@ export {
     };
     
     global pop3_session_states: table[string] of Pop3SessionState;
+    
+    # 辅助函数声明
+    global is_imap_conn: function(c: connection): bool;
+    global sanitize_login_args: function(args: string): string;
+    global imap_store_pending: function(uid: string, tag: string, command: string, args: string);
+    global imap_consume_buffer: function(uid: string, is_orig: bool, data: string);
+    global handle_imap_client_line: function(uid: string, line: string);
+    global handle_imap_server_line: function(uid: string, line: string);
+}
+
+# 辅助函数：识别IMAP连接
+function is_imap_conn(c: connection): bool
+{
+    return c$id$resp_p in MailActivity::IMAP_PORTS;
+}
+
+# 辅助函数：脱敏登录凭证
+function sanitize_login_args(args: string): string
+{
+    # 简单的凭证脱敏，将可能的密码替换为 [REDACTED]
+    local parts = split_string(args, / /);
+    if ( |parts| >= 2 ) {
+        # 假设第二个参数是密码
+        parts[1] = "[REDACTED]";
+        return join_string_vec(parts, " ");
+    }
+    return args;
+}
+
+# IMAP 命令缓冲管理
+function imap_store_pending(uid: string, tag: string, command: string, args: string)
+{
+    if ( uid !in MailActivity::imap_pending )
+        MailActivity::imap_pending[uid] = vector();
+    
+    local cmd_info = fmt("%s %s %s", tag, command, args);
+    MailActivity::imap_pending[uid][|MailActivity::imap_pending[uid]|] = cmd_info;
+}
+
+# IMAP 缓冲区处理
+function imap_consume_buffer(uid: string, is_orig: bool, data: string)
+{
+    if ( uid !in MailActivity::imap_buffers )
+        MailActivity::imap_buffers[uid] = "";
+    
+    MailActivity::imap_buffers[uid] += data;
+    
+    # 按行处理
+    local lines = split_string(MailActivity::imap_buffers[uid], /\r?\n/);
+    
+    # 保留最后一个不完整的行
+    if ( |lines| > 0 ) {
+        MailActivity::imap_buffers[uid] = lines[|lines|-1];
+        
+        # 处理完整的行
+        for ( i in lines ) {
+            if ( i < |lines| - 1 ) {
+                local line = lines[i];
+                if ( |line| > 0 ) {
+                    if ( is_orig )
+                        handle_imap_client_line(uid, line);
+                    else
+                        handle_imap_server_line(uid, line);
+                }
+            }
+        }
+    }
+}
+
+# 处理IMAP客户端命令行
+function handle_imap_client_line(uid: string, line: string)
+{
+    # 解析IMAP命令格式: TAG COMMAND [ARGUMENTS]
+    local parts = split_string(line, / /);
+    if ( |parts| < 2 )
+        return;
+    
+    local tag = parts[0];
+    local command = to_upper(parts[1]);
+    local args = "";
+    
+    if ( |parts| > 2 ) {
+        # 重新组合参数
+        local arg_parts: vector of string = vector();
+        for ( i in parts ) {
+            if ( i >= 2 )
+                arg_parts[|arg_parts|] = parts[i];
+        }
+        args = join_string_vec(arg_parts, " ");
+    }
+    
+    # 脱敏登录命令
+    if ( command == "LOGIN" )
+        args = sanitize_login_args(args);
+    
+    # 存储待处理的命令
+    imap_store_pending(uid, tag, command, args);
+    
+    # 创建日志记录
+    local info: MailActivity::Info = [
+        $ts = network_time(),
+        $uid = uid,
+        $id = MailActivity::imap_sessions[uid]$id,
+        $protocol = "IMAP",
+        $role = "client",
+        $activity = fmt("IMAP_%s", command),
+        $imap_tag = tag,
+        $imap_command = command,
+        $imap_arguments = args
+    ];
+    
+    Log::write(MailActivity::LOG, info);
+    print fmt("[IMAP] Client Command: %s %s %s", tag, command, args);
+}
+
+# 处理IMAP服务器响应行
+function handle_imap_server_line(uid: string, line: string)
+{
+    # 解析IMAP响应格式: TAG STATUS [RESPONSE-TEXT] 或 * UNTAGGED-RESPONSE
+    local parts = split_string(line, / /);
+    if ( |parts| < 2 )
+        return;
+    
+    local tag = parts[0];
+    local status = parts[1];
+    local response = "";
+    
+    if ( |parts| > 2 ) {
+        local resp_parts: vector of string = vector();
+        for ( i in parts ) {
+            if ( i >= 2 )
+                resp_parts[|resp_parts|] = parts[i];
+        }
+        response = join_string_vec(resp_parts, " ");
+    }
+    
+    # 创建日志记录
+    local info: MailActivity::Info = [
+        $ts = network_time(),
+        $uid = uid,
+        $id = MailActivity::imap_sessions[uid]$id,
+        $protocol = "IMAP",
+        $role = "server",
+        $activity = "IMAP_RESPONSE",
+        $imap_tag = tag,
+        $imap_status = status,
+        $imap_response = response
+    ];
+    
+    Log::write(MailActivity::LOG, info);
+    print fmt("[IMAP] Server Response: %s %s %s", tag, status, response);
 }
 
 event zeek_init()
@@ -155,10 +323,16 @@ event zeek_init()
     # 注册 SMTP 非标准端口
     Analyzer::register_for_ports(Analyzer::ANALYZER_SMTP, MailActivity::SMTP_PORTS);
     
+    # 注册 IMAP 非标准端口（为GreenMail备用端口）
+    Analyzer::register_for_ports(Analyzer::ANALYZER_IMAP, MailActivity::IMAP_PORTS);
+    
     Log::create_stream(MailActivity::LOG, [$columns=MailActivity::Info, $path="mail_activity"]);
     if ( MailActivity::enable_pop3_log )
         Log::create_stream(MailActivity::POP_LOG, [$columns=MailActivity::PopInfo, $path=MailActivity::pop3_log_path]);
     print "[MAIL] Enhanced Mail Activity Monitor Started (SMTP/POP3/IMAP)";
+    print fmt("[MAIL] Registered SMTP ports: %s", MailActivity::SMTP_PORTS);
+    print fmt("[MAIL] Registered POP3 ports: %s", MailActivity::POP3_PORTS);
+    print fmt("[MAIL] Registered IMAP ports: %s", MailActivity::IMAP_PORTS);
     schedule MailActivity::report_interval { MailActivity::mail_stats_report() };
 }
 
@@ -310,6 +484,208 @@ event smtp_data(c: connection, is_orig: bool, data: string)
     Log::write(MailActivity::LOG, info);
 }
 
+# POP3 事件处理 - 优化后的版本，减少协议噪音
+event pop3_request(c: connection, is_orig: bool, command: string, arg: string)
+{
+    if ( ! is_orig )
+        return;
+    
+    local uid = c$uid;
+    
+    # 处理RETR命令 - 创建内容聚焦的会话记录
+    if ( command == "RETR" ) {
+        local info: MailActivity::Info = [
+            $ts = network_time(),
+            $uid = uid,
+            $id = c$id,
+            $protocol = "POP3",
+            $role = "receiver",
+            $action = "RETRIEVE",
+            $activity = "POP3_RETR",
+            $mailbox_host = fmt("%s", c$id$resp_h),
+            $pop3_command = command,
+            $pop3_arguments = arg
+        ];
+        
+        # 解析消息编号
+        if ( arg != "" ) {
+            info$detail = fmt("Message #%s", arg);
+        }
+        
+        # 存储到POP3会话表中，等待数据解析
+        MailActivity::pop3_sessions[uid] = info;
+        
+        # 初始化会话状态
+        local state: MailActivity::Pop3SessionState = [
+            $bytes_received = 0,
+            $headers_complete = F
+        ];
+        
+        if ( arg != "" ) {
+            state$message_number = to_count(arg);
+        }
+        
+        MailActivity::pop3_session_states[uid] = state;
+        
+        print fmt("[POP3] Starting message retrieval: %s (UID: %s)", arg, uid);
+    }
+    else {
+        # 为所有其他POP3命令创建结构化记录
+        local cmd_info: MailActivity::Info = [
+            $ts = network_time(),
+            $uid = uid,
+            $id = c$id,
+            $protocol = "POP3",
+            $role = "client",
+            $activity = fmt("POP3_%s", command),
+            $pop3_command = command,
+            $pop3_arguments = arg
+        ];
+        
+        # 特殊处理不同命令类型
+        if ( command == "USER" ) {
+            cmd_info$mailbox_user = arg;
+            cmd_info$user = arg;
+            print fmt("[POP3] User Login Attempt: %s", arg);
+        }
+        else if ( command == "PASS" ) {
+            # 不记录密码内容
+            cmd_info$pop3_arguments = "[REDACTED]";
+            print fmt("[POP3] Password Authentication");
+        }
+        else if ( command == "STAT" ) {
+            print fmt("[POP3] Status Request");
+        }
+        else if ( command == "LIST" ) {
+            print fmt("[POP3] List Request: %s", arg);
+        }
+        else if ( command == "DELE" ) {
+            print fmt("[POP3] Message Deletion: %s", arg);
+        }
+        else if ( command == "QUIT" ) {
+            print fmt("[POP3] Session Quit");
+        }
+        
+        # 记录到主日志
+        Log::write(MailActivity::LOG, cmd_info);
+    }
+    
+    # 只记录重要的POP3命令到单独日志（如果启用）
+    if ( MailActivity::enable_pop3_log ) {
+        # 只记录认证和重要操作，跳过LIST、STAT等噪音命令
+        if ( command == "USER" || command == "PASS" || command == "RETR" || command == "DELE" ) {
+            local pop_info: MailActivity::PopInfo = [
+                $ts = network_time(),
+                $uid = uid,
+                $id = c$id,
+                $activity = fmt("POP3_%s", command)
+            ];
+            
+            if ( command == "USER" ) {
+                pop_info$user = arg;
+            }
+            else if ( command == "PASS" ) {
+                pop_info$activity = "POP3_PASS";
+            }
+            else if ( command == "RETR" ) {
+                pop_info$argument = arg;
+            }
+            else if ( command == "DELE" ) {
+                pop_info$argument = arg;
+            }
+            
+            Log::write(MailActivity::POP_LOG, pop_info);
+        }
+    }
+}
+
+event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
+{
+    if ( is_orig )
+        return;
+    
+    local uid = c$uid;
+    
+    # 为所有POP3回复创建结构化记录
+    local reply_info: MailActivity::Info = [
+        $ts = network_time(),
+        $uid = uid,
+        $id = c$id,
+        $protocol = "POP3",
+        $role = "server",
+        $activity = fmt("POP3_%s_REPLY", cmd),
+        $pop3_command = cmd,
+        $pop3_response = msg
+    ];
+    
+    # 解析响应状态
+    if ( /^\+OK/ in msg ) {
+        reply_info$pop3_status = "+OK";
+        reply_info$status = "SUCCESS";
+        print fmt("[OK] POP3 %s Success: %s", cmd, msg);
+    }
+    else if ( /^-ERR/ in msg ) {
+        reply_info$pop3_status = "-ERR";
+        reply_info$status = "ERROR";
+        print fmt("[ERROR] POP3 %s Error: %s", cmd, msg);
+    }
+    
+    # 记录到主日志
+    Log::write(MailActivity::LOG, reply_info);
+    
+    # 只记录重要的回复到POP3日志（如果启用）
+    if ( MailActivity::enable_pop3_log ) {
+        # 只记录认证结果和重要操作的回复
+        if ( cmd == "USER" || cmd == "PASS" || cmd == "RETR" || cmd == "DELE" ) {
+            local info: MailActivity::PopInfo = [
+                $ts = network_time(),
+                $uid = uid,
+                $id = c$id,
+                $activity = fmt("POP3_%s_REPLY", cmd),
+                $status = msg
+            ];
+            
+            Log::write(MailActivity::POP_LOG, info);
+        }
+    }
+    
+    # 处理USER命令成功回复，更新用户信息
+    if ( cmd == "USER" && /^\+OK/ in msg ) {
+        # 如果有活跃的POP3会话，更新用户信息
+        if ( uid in MailActivity::pop3_sessions ) {
+            # 用户信息将在RETR时设置
+        }
+    }
+}
+
+# IMAP 连接处理 - 通过tcp_contents事件实现轻量级解析
+event tcp_contents(c: connection, is_orig: bool, seq: count, contents: string)
+{
+    # 只处理IMAP连接
+    if ( ! is_imap_conn(c) )
+        return;
+    
+    local uid = c$uid;
+    
+    # 初始化IMAP会话（如果需要）
+    if ( uid !in MailActivity::imap_sessions ) {
+        local imap_info: MailActivity::Info = [
+            $ts = network_time(),
+            $uid = uid,
+            $id = c$id,
+            $protocol = "IMAP",
+            $activity = "IMAP_CONNECTION_START"
+        ];
+        
+        MailActivity::imap_sessions[uid] = imap_info;
+        print fmt("[IMAP] New IMAP connection: %s:%d -> %s:%d", 
+                  c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p);
+    }
+    
+    # 处理IMAP数据流
+    imap_consume_buffer(uid, is_orig, contents);
+}
+
 event ssl_established(c: connection)
 {
     if ( c$id$resp_p in MailActivity::SMTP_PORTS || c$id$resp_p in MailActivity::POP3_PORTS || c$id$resp_p in MailActivity::IMAP_PORTS ) {
@@ -341,6 +717,14 @@ event ssl_established(c: connection)
             if ( c$ssl?$version )
                 pop_info$tls_version = c$ssl$version;
             MailActivity::pop3_sessions[uid] = pop_info;
+        }
+        else if ( uid in MailActivity::imap_sessions ) {
+            local imap_info = MailActivity::imap_sessions[uid];
+            imap_info$tls = T;
+            imap_info$encrypted = T;
+            if ( c$ssl?$version )
+                imap_info$tls_version = c$ssl$version;
+            MailActivity::imap_sessions[uid] = imap_info;
         }
         # 处理隐式 TLS 连接（从连接开始就是加密的）
         else if ( is_implicit_tls ) {
@@ -396,138 +780,6 @@ event ssl_established(c: connection)
     }
 }
 
-# POP3 事件处理 - 优化后的版本，减少协议噪音
-event pop3_request(c: connection, is_orig: bool, command: string, arg: string)
-{
-    if ( ! is_orig )
-        return;
-    
-    local uid = c$uid;
-    
-    # 处理RETR命令 - 创建内容聚焦的会话记录
-    if ( command == "RETR" ) {
-        local info: MailActivity::Info = [
-            $ts = network_time(),
-            $uid = uid,
-            $id = c$id,
-            $protocol = "POP3",
-            $role = "receiver",
-            $action = "RETRIEVE",
-            $activity = "POP3_RETR",
-            $mailbox_host = fmt("%s", c$id$resp_h)
-        ];
-        
-        # 解析消息编号
-        if ( arg != "" ) {
-            info$detail = fmt("Message #%s", arg);
-        }
-        
-        # 存储到POP3会话表中，等待数据解析
-        MailActivity::pop3_sessions[uid] = info;
-        
-        # 初始化会话状态
-        local state: MailActivity::Pop3SessionState = [
-            $bytes_received = 0,
-            $headers_complete = F
-        ];
-        
-        if ( arg != "" ) {
-            state$message_number = to_count(arg);
-        }
-        
-        MailActivity::pop3_session_states[uid] = state;
-        
-        print fmt("[POP3] Starting message retrieval: %s (UID: %s)", arg, uid);
-    }
-    
-    # 只记录重要的POP3命令到单独日志（如果启用）
-    if ( MailActivity::enable_pop3_log ) {
-        # 只记录认证和重要操作，跳过LIST、STAT等噪音命令
-        if ( command == "USER" || command == "PASS" || command == "RETR" || command == "DELE" ) {
-            local pop_info: MailActivity::PopInfo = [
-                $ts = network_time(),
-                $uid = uid,
-                $id = c$id,
-                $activity = fmt("POP3_%s", command)
-            ];
-            
-            if ( command == "USER" ) {
-                pop_info$user = arg;
-                print fmt("[POP3] User Login Attempt: %s", arg);
-                
-                # 记录用户信息到可能的会话中
-                if ( uid in MailActivity::pop3_sessions ) {
-                    MailActivity::pop3_sessions[uid]$mailbox_user = arg;
-                }
-            }
-            else if ( command == "PASS" ) {
-                pop_info$activity = "POP3_PASS";
-                print fmt("[POP3] Password Authentication");
-            }
-            else if ( command == "RETR" ) {
-                pop_info$argument = arg;
-            }
-            else if ( command == "DELE" ) {
-                pop_info$argument = arg;
-                print fmt("[POP3] Message Deletion: %s", arg);
-            }
-            
-            Log::write(MailActivity::POP_LOG, pop_info);
-        }
-    }
-    
-    # 处理USER命令，记录用户信息到内容聚焦会话
-    if ( command == "USER" ) {
-        # 为后续的RETR会话预设用户信息
-        # 这里我们可以创建一个临时记录来存储用户信息
-        print fmt("[POP3] User Login Attempt: %s", arg);
-    }
-}
-
-event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
-{
-    if ( is_orig )
-        return;
-    
-    # 只记录重要的回复到POP3日志（如果启用）
-    if ( MailActivity::enable_pop3_log ) {
-        # 只记录认证结果和重要操作的回复
-        if ( cmd == "USER" || cmd == "PASS" || cmd == "RETR" || cmd == "DELE" ) {
-            local info: MailActivity::PopInfo = [
-                $ts = network_time(),
-                $uid = c$uid,
-                $id = c$id,
-                $activity = fmt("POP3_%s_REPLY", cmd),
-                $status = msg
-            ];
-            
-            if ( /^\+OK/ in msg ) {
-                print fmt("[OK] POP3 %s Success: %s", cmd, msg);
-            }
-            else if ( /^-ERR/ in msg ) {
-                print fmt("[ERROR] POP3 %s Error: %s", cmd, msg);
-            }
-            
-            Log::write(MailActivity::POP_LOG, info);
-        }
-    }
-    
-    # 处理USER命令成功回复，更新用户信息
-    if ( cmd == "USER" && /^\+OK/ in msg ) {
-        local uid = c$uid;
-        # 如果有活跃的POP3会话，更新用户信息
-        if ( uid in MailActivity::pop3_sessions ) {
-            # 用户信息将在RETR时设置
-        }
-    }
-}
-
-# ========== IMAP 监控 ==========
-# 注意：Zeek的IMAP协议分析器只支持StartTLS功能，没有提供imap_request和imap_reply事件
-# 我们通过连接跟踪和TLS事件来监控IMAP活动
-
-# IMAP连接通过ssl_established事件和端口识别来处理
-
 event connection_state_remove(c: connection)
 {
     local uid = c$uid;
@@ -549,6 +801,12 @@ event connection_state_remove(c: connection)
         print fmt("[IMAP] Connection ended: %s", uid);
     }
     
+    # 清理 IMAP 缓冲区和待处理命令
+    if ( uid in MailActivity::imap_buffers )
+        delete MailActivity::imap_buffers[uid];
+    if ( uid in MailActivity::imap_pending )
+        delete MailActivity::imap_pending[uid];
+    
     # 处理 POP3 会话
     if ( uid in MailActivity::pop3_sessions ) {
         local pop_info = MailActivity::pop3_sessions[uid];
@@ -557,6 +815,10 @@ event connection_state_remove(c: connection)
         delete MailActivity::pop3_sessions[uid];
         print fmt("[POP3] Connection ended: %s", uid);
     }
+    
+    # 清理 POP3 会话状态
+    if ( uid in MailActivity::pop3_session_states )
+        delete MailActivity::pop3_session_states[uid];
 }
 
 # POP3数据事件 - 解析邮件头部和内容聚焦
