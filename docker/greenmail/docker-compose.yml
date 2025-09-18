@@ -4,10 +4,11 @@ services:
     restart: unless-stopped
     environment:
       GREENMAIL_OPTS: >-
-        -Dgreenmail.setup=SMTP:3025,POP3:3110
+        -Dgreenmail.setup.test.smtp
+        -Dgreenmail.setup.test.pop3
         -Dgreenmail.hostname=0.0.0.0
-        -Dgreenmail.users=demo:demo@local
-        -Dgreenmail.start.tls=false
+        -Dgreenmail.users=demo:demo@localhost.local
+        -Dgreenmail.auth.disabled
     ports:
-      - "1025:3025"   # SMTP (mapped to localhost:1025)
-      - "1110:3110"   # POP3 (mapped to localhost:1110)
+      - "3025:3025"   # SMTP
+      - "3110:3110"   # POP3
