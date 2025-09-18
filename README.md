@@ -89,6 +89,38 @@ pkill -f "zeek.*simple-smtp-monitor"
 3. 是否有足够的权限
 4. 防火墙设置是否阻止监控
 
+## 快速验证：邮件发送/接收 JSON 日志
+
+为了验证 Zeek 可以同时捕获发信（SMTP）和收信（POP3）活动，并直接生成 JSON 格式日志，可以使用新增脚本 `zeek-scripts/mail-activity-json.zeek`。
+
+- **离线 SMTP 示例（发信）**
+  ```bash
+  mkdir -p analysis/mail-activity-smtp
+  cd analysis/mail-activity-smtp
+  zeek -Cr ../../pcap-samples/smtp.pcap ../../zeek-scripts/mail-activity-json.zeek
+  jq 'select(.protocol == "SMTP")' mail_activity.log | head
+  ```
+  该命令会读取仓库自带的 `smtp.pcap` 样本，并生成 `mail_activity.log`（JSON）。日志中可直接看到 `SMTP_MAIL`、`SMTP_RCPT` 等事件，验证发信流程。
+
+- **本地 POP3 示例（收信）**
+  1. 启动 GreenMail 提供测试邮箱：`docker compose -f docker/greenmail/docker-compose.yml up -d`
+  2. 另开终端执行：
+     ```bash
+     mkdir -p analysis/mail-activity-pop3
+     cd analysis/mail-activity-pop3
+     sudo zeek -i lo0 ../../zeek-scripts/mail-activity-json.zeek "port 3110"
+     ```
+  3. 在原终端运行 `./scripts/test-mail-retrieval.sh`，选择 POP3 测试（默认连接 3110）。
+  Zeek 会实时写入 `analysis/mail-activity-pop3/mail_activity.log`，其中包含 `POP3_USER`、`POP3_RETR` 等事件，证明收信流程同样可被 JSON 记录。
+
+- **日志字段**
+  `mail_activity.log` 中关键字段包括：
+  - `protocol`: `SMTP` 或 `POP3`
+  - `role`: `send`（发信）或 `receive`（收信）
+  - `activity`: 具体指令或状态（如 `SMTP_MAIL`, `POP3_REPLY_RETR`）
+  - `mail_from` / `rcpt_to` / `user`: 关键邮箱信息
+  - `status` / `detail`: 服务器返回码及文本
+
 ## 许可证
 
 本项目仅供学习和研究使用。
