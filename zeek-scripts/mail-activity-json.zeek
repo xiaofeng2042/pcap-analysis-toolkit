@@ -58,7 +58,7 @@ global mail_stats_report: event();
 event zeek_init()
 {
     Log::create_stream(LOG, [$columns=Info, $path="mail_activity"]);
-    print "📧 Enhanced Mail Activity Monitor Started";
+    print "[MAIL] Enhanced Mail Activity Monitor Started";
     schedule report_interval { mail_stats_report() };
 }
 
@@ -89,13 +89,13 @@ event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
     else if ( command == "HELO" || command == "EHLO" ) {
         info$detail = arg;
         ++smtp_connections;
-        print fmt("📧 New SMTP Connection: %s:%d -> %s:%d (HELO: %s)", 
+        print fmt("[SMTP] New SMTP Connection: %s:%d -> %s:%d (HELO: %s)", 
                  c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, arg);
     }
     else if ( command == "STARTTLS" ) {
         ++starttls_attempts;
         info$detail = "STARTTLS negotiation";
-        print fmt("🔐 STARTTLS Attempt: %s:%d", c$id$orig_h, c$id$orig_p);
+        print fmt("[TLS] STARTTLS Attempt: %s:%d", c$id$orig_h, c$id$orig_p);
     }
     else
         info$detail = arg;
@@ -118,10 +118,10 @@ event smtp_reply(c: connection, is_orig: bool, code: count, cmd: string, msg: st
     # 特殊处理一些重要的回复
     if ( code >= 200 && code < 300 ) {
         if ( cmd == "MAIL" || cmd == "RCPT" || cmd == "DATA" ) {
-            print fmt("✅ SMTP %s Success: %d %s", cmd, code, msg);
+            print fmt("[OK] SMTP %s Success: %d %s", cmd, code, msg);
         }
     } else if ( code >= 400 ) {
-        print fmt("❌ SMTP %s Error: %d %s", cmd, code, msg);
+        print fmt("[ERROR] SMTP %s Error: %d %s", cmd, code, msg);
     }
     
     Log::write(LOG, info);
@@ -214,7 +214,7 @@ event pop3_reply(c: connection, is_orig: bool, cmd: string, msg: string)
 
     # 特殊处理登录成功
     if ( cmd == "PASS" && /^\+OK/ in msg ) {
-        print fmt("✅ POP3 Login Success: %s", msg);
+        print fmt("[OK] POP3 Login Success: %s", msg);
     }
 
     Log::write(LOG, info);
@@ -252,7 +252,7 @@ event connection_state_remove(c: connection)
         info$detail = fmt("duration %.2fs, size %d/%d", c$duration, c$orig$size, c$resp$size);
         Log::write(LOG, info);
         
-        print fmt("📊 SMTP Connection Closed: %s:%d (Duration: %.2fs, Data: %d/%d bytes)", 
+        print fmt("[STATS] SMTP Connection Closed: %s:%d (Duration: %.2fs, Data: %d/%d bytes)", 
                  c$id$orig_h, c$id$orig_p, c$duration, c$orig$size, c$resp$size);
     }
     else if ( resp_p in POP3_PORTS )
@@ -262,7 +262,7 @@ event connection_state_remove(c: connection)
         info2$detail = fmt("duration %.2fs, size %d/%d", c$duration, c$orig$size, c$resp$size);
         Log::write(LOG, info2);
         
-        print fmt("📊 POP3 Connection Closed: %s:%d (Duration: %.2fs, Data: %d/%d bytes)", 
+        print fmt("[STATS] POP3 Connection Closed: %s:%d (Duration: %.2fs, Data: %d/%d bytes)", 
                  c$id$orig_h, c$id$orig_p, c$duration, c$orig$size, c$resp$size);
     }
 }
@@ -270,18 +270,18 @@ event connection_state_remove(c: connection)
 # 新增：定时统计报告事件
 event mail_stats_report()
 {
-    print "╔══════════════════════════════════════════════════════════════╗";
-    print fmt("║ 📊 Mail Traffic Statistics [%s] ║", strftime("%Y-%m-%d %H:%M:%S", current_time()));
-    print "╠══════════════════════════════════════════════════════════════╣";
-    print fmt("║   SMTP Connections: %-10d                              ║", smtp_connections);
-    print fmt("║   STARTTLS Attempts: %-10d                             ║", starttls_attempts);
-    print fmt("║   STARTTLS Success: %-10d                              ║", starttls_success);
-    print fmt("║   Encrypted Connections: %-10d                         ║", encrypted_connections);
+    print "+==============================================================+";
+    print fmt("|| [STATS] Mail Traffic Statistics [%s] ||", strftime("%Y-%m-%d %H:%M:%S", current_time()));
+    print "+==============================================================+";
+    print fmt("||   SMTP Connections: %-10d                              ||", smtp_connections);
+    print fmt("||   STARTTLS Attempts: %-10d                             ||", starttls_attempts);
+    print fmt("||   STARTTLS Success: %-10d                              ||", starttls_success);
+    print fmt("||   Encrypted Connections: %-10d                         ||", encrypted_connections);
     
     local encryption_rate = starttls_attempts > 0 ? 
         (starttls_success * 100.0 / starttls_attempts) : 0.0;
-    print fmt("║   Encryption Success Rate: %.1f%%                           ║", encryption_rate);
-    print "╚══════════════════════════════════════════════════════════════╝";
+    print fmt("||   Encryption Success Rate: %.1f%%                           ||", encryption_rate);
+    print "+==============================================================+";
     
     # 安排下次报告
     schedule report_interval { mail_stats_report() };
