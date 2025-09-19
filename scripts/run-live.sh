@@ -38,6 +38,20 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 OUTPUT_DIR=${2:-"$ROOT_DIR/output/live-$(date +%Y%m%d-%H%M%S)"}
 SCRIPT="$ROOT_DIR/zeek-scripts/mail-activity-json.zeek"
 
+# Load environment variables from .env file if it exists
+ENV_FILE="$ROOT_DIR/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  echo "[INFO] Loading configuration from $ENV_FILE"
+  # Export variables from .env file
+  set -a  # automatically export all variables
+  source "$ENV_FILE"
+  set +a  # stop automatically exporting
+  echo "[INFO] Configuration loaded: SITE_ID=${SITE_ID:-"not set"}, LINK_ID=${LINK_ID:-"not set"}"
+else
+  echo "[WARN] No .env file found at $ENV_FILE"
+  echo "[WARN] SITE_ID must be set manually or via environment variable"
+fi
+
 # Mail protocol ports filter
 # SMTP: 25 (standard), 465 (SMTPS), 587 (submission), 1025 (non-standard), 2525 (alternative)
 # POP3: 110 (standard), 995 (POP3S)
@@ -76,6 +90,11 @@ if [[ "$USE_DOCKER" == "true" ]]; then
     -v "$OUTPUT_DIR:/logs" \
     -v "$ROOT_DIR/zeek-scripts:/scripts" \
     -w /logs \
+    -e "SITE_ID=${SITE_ID:-}" \
+    -e "LINK_ID=${LINK_ID:-}" \
+    -e "LAN_INTERFACE=${LAN_INTERFACE:-eno1}" \
+    -e "TUNNEL_INTERFACE=${TUNNEL_INTERFACE:-tap_tap}" \
+    -e "REPORT_INTERVAL=${REPORT_INTERVAL:-30}" \
     zeek/zeek \
     zeek -C -i "$IFACE" -f "$FILTER" /scripts/mail-activity-json.zeek
 else

@@ -19,11 +19,11 @@ redef LogAscii::use_json = T;
 module MailActivity;
 
 export {
-    # 双端监控配置参数
-    option SITE_ID = "" &redef;                    # 必填：overseas/hq
-    option LINK_ID = "" &redef;                    # 可选：链路标识，如overseas↔hq-1
-    option LAN_INTERFACE = "eno1" &redef;          # 主采集口（邮件流水）
-    option TUNNEL_INTERFACE = "tap_tap" &redef;    # 副采集口（链路画像）
+    # 双端监控配置参数 - 支持从环境变量读取
+    option SITE_ID = getenv("SITE_ID") != "" ? getenv("SITE_ID") : "" &redef;                    # 必填：overseas/hq
+    option LINK_ID = getenv("LINK_ID") != "" ? getenv("LINK_ID") : "" &redef;                    # 可选：链路标识，如overseas↔hq-1
+    option LAN_INTERFACE = getenv("LAN_INTERFACE") != "" ? getenv("LAN_INTERFACE") : "eno1" &redef;          # 主采集口（邮件流水）
+    option TUNNEL_INTERFACE = getenv("TUNNEL_INTERFACE") != "" ? getenv("TUNNEL_INTERFACE") : "tap_tap" &redef;    # 副采集口（链路画像）
     
     # 方向判定结果类型
     type DirectionInfo: record {
