@@ -1,9 +1,9 @@
-##! 双端邮件监控 - 持久化模块
-##! 实现月度统计的持久化存储和状态恢复
-##! 支持TSV格式的状态文件和自动月度切换
+# persistence.zeek - 持久化模块
+# 处理月度统计的持久化存储
 
 @load base/utils/time
-@load ./utils
+
+module MailActivity;
 
 # 获取当前月份字符串
 function get_current_month(): string
@@ -55,16 +55,6 @@ function update_monthly_stats(action: string, encrypted: bool, decrypted: bool)
 # 保存统计到文件 - 简化实现
 function save_stats_to_file()
 {
-    local stats_line = fmt("%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s", 
-                          current_month, 
-                          SITE_ID, 
-                          LINK_ID,
-                          send_count, 
-                          receive_count, 
-                          encrypt_count, 
-                          decrypt_count,
-                          strftime("%Y-%m-%d %H:%M:%S", current_time()));
-    
     # 简化版本：直接记录到 mail_stats.log
     local stats_info: StatsInfo;
     stats_info$month = current_month;
@@ -108,8 +98,3 @@ function load_stats_from_file()
     
     Log::write(STATS_LOG, restart_info);
 }
-
-# 简化版本 - 移除复杂的文件操作
-# 实际部署时可通过外部脚本或Input框架实现TSV文件持久化
-
-print "[INFO] Persistence module loaded";
