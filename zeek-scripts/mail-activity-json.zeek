@@ -19,6 +19,30 @@ redef LogAscii::use_json = T;
 module MailActivity;
 
 export {
+    # 双端监控配置参数
+    option SITE_ID = "" &redef;                    # 必填：overseas/hq
+    option LINK_ID = "" &redef;                    # 可选：链路标识，如overseas↔hq-1
+    option LAN_INTERFACE = "eno1" &redef;          # 主采集口（邮件流水）
+    option TUNNEL_INTERFACE = "tap_tap" &redef;    # 副采集口（链路画像）
+    
+    # 方向判定结果类型
+    type DirectionInfo: record {
+        direction_raw: string;                     # outbound/inbound
+        action: string;                           # 标准化动作描述
+        evidence: vector of string;               # 证据列表
+        confidence: double;                       # 置信度 0.5-1.0
+    };
+    
+    # 连接跟踪信息
+    type ConnectionTrack: record {
+        syn_path: string &optional;               # SYN包路径：eno1->tap_tap 或 tap_tap->eno1
+        smtp_role: string &optional;              # SMTP角色：client_first/server_first
+        first_interface: string &optional;        # 首次观察到的接口
+        link_encrypted: bool &default=F;          # 链路加密状态
+        link_decrypted: bool &default=F;          # 链路解密状态
+        direction_info: DirectionInfo &optional;  # 方向判定结果
+    };
+
     # 主要信息记录结构
     type Info: record {
         # 基础连接信息
@@ -49,8 +73,18 @@ export {
         fuids: vector of string &log &optional;
         is_webmail: bool &log &optional;
         
+        # 双端监控新增字段
+        site_id: string &log &optional;           # 站点标识：overseas/hq
+        link_id: string &log &optional;           # 链路标识
+        direction_raw: string &log &optional;     # 原始方向：outbound/inbound
+        action: string &log &optional;            # 标准化动作
+        evidence: vector of string &log &optional; # 方向判定证据
+        confidence: double &log &optional;        # 方向判定置信度
+        link_encrypted: bool &log &optional;      # 链路加密状态
+        link_decrypted: bool &log &optional;      # 链路解密状态
+        subject_sha256: string &log &optional;    # 主题SHA256哈希
+        
         # 内容聚焦字段
-        action: string &log &optional;
         mailbox_host: string &log &optional;
         mailbox_user: string &log &optional;
         size_bytes: count &log &optional;
@@ -77,8 +111,61 @@ export {
         pop3_status: string &log &optional;
     };
     
-    # 日志ID
-    redef enum Log::ID += { LOG };
+    # 日志ID枚举
+    redef enum Log::ID += { 
+        LOG,           # 主邮件活动日志
+        FLOW_LOG,      # 逐封流水日志
+        STATS_LOG,     # 月度统计日志
+        TLS_LOG        # TLS链路画像日志
+    };
+
+    # 逐封流水日志结构（mail_flow.log）
+    type FlowInfo: record {
+        ts: time &log;                             # ISO8601时间戳
+        site_id: string &log;                      # 站点标识
+        link_id: string &log &optional;           # 链路标识
+        direction_raw: string &log;                # 原始方向：outbound/inbound
+        action: string &log;                       # 标准化动作
+        msg_id: string &log &optional;            # Message-ID（去尖括号）
+        mailfrom: string &log &optional;          # 发件人
+        rcptto: string &log &optional;            # 收件人（拼接）
+        subject_sha256: string &log &optional;    # 主题SHA256哈希
+        link_encrypted: bool &log &optional;      # 链路加密状态
+        link_decrypted: bool &log &optional;      # 链路解密状态
+        orig_h: addr &log;                        # 源IP
+        resp_h: addr &log;                        # 目标IP
+        uid: string &log;                         # Zeek连接UID
+        evidence: vector of string &log;          # 方向判定证据
+        confidence: double &log;                  # 方向判定置信度
+    };
+
+    # 月度统计日志结构
+    type StatsInfo: record {
+        month: string &log;                        # YYYY-MM格式
+        site_id: string &log;
+        link_id: string &log &optional;
+        send_count: count &log;
+        receive_count: count &log;
+        encrypt_count: count &log;                 # 链路加密计数
+        decrypt_count: count &log;                 # 链路解密计数
+        last_update: time &log;
+    };
+
+    # TLS链路画像日志结构
+    type TlsInfo: record {
+        ts: time &log;
+        site_id: string &log;
+        link_id: string &log &optional;
+        ip_pair: string &log;                      # IP:PORT-IP:PORT格式
+        starttls_attempt: bool &log;
+        starttls_success: bool &log;
+        tls_version: string &log &optional;
+        cipher: string &log &optional;
+        sni: string &log &optional;
+        ja3: string &log &optional;
+        ja3s: string &log &optional;
+        handshake_ms: double &log &optional;
+    };
 
     # POP3日志配置选项
     option enable_pop3_log = F;
@@ -110,6 +197,17 @@ export {
     global starttls_success: count = 0;
     global encrypted_connections: count = 0;
     
+    # 双端监控新增全局变量
+    global connection_tracks: table[string] of ConnectionTrack;  # 连接跟踪表
+    global monthly_stats: StatsInfo;                             # 当前月度统计
+    global current_month: string = "";                           # 当前月份
+    
+    # 月度计数器
+    global send_count: count = 0;
+    global receive_count: count = 0;
+    global encrypt_count: count = 0;
+    global decrypt_count: count = 0;
+    
     global smtp_sessions: table[string] of Info;
     global imap_sessions: table[string] of Info;
     global pop3_sessions: table[string] of Info;
@@ -117,6 +215,24 @@ export {
     
     # 统计报告间隔
     const report_interval = 30sec &redef;
+    const stats_save_interval = 60sec &redef;      # 状态文件保存间隔
+    const stats_file_path = "mail_stats.tsv" &redef; # 状态文件路径
+    
+    # 前向声明函数
+    global determine_direction: function(c: connection, track: ConnectionTrack): DirectionInfo;
+    global standardize_action: function(site_id: string, direction: string): string;
+    global update_monthly_stats: function(action: string, encrypted: bool, decrypted: bool);
+    global save_stats_to_file: function();
+    global load_stats_from_file: function();
+    global get_current_month: function(): string;
+    global is_mail_port: function(p: port): bool;
+    global identify_protocol: function(p: port): string;
+    global update_smtp_role: function(uid: string, role: string);
+    global generate_mail_flow_record: function(c: connection, info: Info);
+    global sha256_hash: function(input: string): string;
+    global join_string_vec: function(vec: vector of string, sep: string): string;
+    global str_hash: function(s: string): string;
+    global mark_connection_encrypted: function(uid: string, is_encrypted: bool, is_decrypted: bool);
 }
 
 # SMTP端口配置（包括标准端口和测试端口）
@@ -152,8 +268,22 @@ global mail_stats_report: event();
 # Zeek初始化事件
 event zeek_init()
 {
-    # 创建主日志流
+    # 验证必填配置
+    if ( MailActivity::SITE_ID == "" ) {
+        print "[ERROR] SITE_ID is required! Please set to 'overseas' or 'hq'";
+        exit(1);
+    }
+    
+    if ( MailActivity::SITE_ID != "overseas" && MailActivity::SITE_ID != "hq" ) {
+        print fmt("[ERROR] Invalid SITE_ID: %s. Must be 'overseas' or 'hq'", MailActivity::SITE_ID);
+        exit(1);
+    }
+    
+    # 创建日志流
     Log::create_stream(MailActivity::LOG, [$columns=MailActivity::Info, $path="mail_activity"]);
+    Log::create_stream(MailActivity::FLOW_LOG, [$columns=MailActivity::FlowInfo, $path="mail_flow"]);
+    Log::create_stream(MailActivity::STATS_LOG, [$columns=MailActivity::StatsInfo, $path="mail_stats"]);
+    Log::create_stream(MailActivity::TLS_LOG, [$columns=MailActivity::TlsInfo, $path="link_tls"]);
     
     # 创建POP3日志流（如果启用）
     if ( MailActivity::enable_pop3_log ) {
@@ -166,42 +296,73 @@ event zeek_init()
     MailActivity::starttls_success = 0;
     MailActivity::encrypted_connections = 0;
     
+    # 初始化双端监控变量
+    MailActivity::send_count = 0;
+    MailActivity::receive_count = 0;
+    MailActivity::encrypt_count = 0;
+    MailActivity::decrypt_count = 0;
+    MailActivity::current_month = get_current_month();
+    
+    # 从文件加载月度统计
+    load_stats_from_file();
+    
     # 注册协议分析器
     Analyzer::register_for_ports(Analyzer::ANALYZER_SMTP, MailActivity::SMTP_PORTS);
     Analyzer::register_for_ports(Analyzer::ANALYZER_POP3, MailActivity::POP3_PORTS);
     
-    # 启动统计报告
-    schedule MailActivity::report_interval { mail_stats_report() };
+    # 启动定时任务
+    schedule MailActivity::report_interval { MailActivity::mail_stats_report() };
+    # 注释掉save_monthly_stats调用，该功能由persistence模块处理
+    # schedule MailActivity::stats_save_interval { MailActivity::save_monthly_stats() };
     
-    print "[INFO] MailActivity module initialized with modular structure";
+    print "[INFO] MailActivity module initialized with dual-interface monitoring";
+    print fmt("[INFO] Site ID: %s, Link ID: %s", MailActivity::SITE_ID, MailActivity::LINK_ID);
+    print fmt("[INFO] LAN Interface: %s, Tunnel Interface: %s", MailActivity::LAN_INTERFACE, MailActivity::TUNNEL_INTERFACE);
     print fmt("[INFO] Monitoring SMTP ports: %s", MailActivity::SMTP_PORTS);
     print fmt("[INFO] Monitoring POP3 ports: %s", MailActivity::POP3_PORTS);
     print fmt("[INFO] Monitoring IMAP ports: %s", MailActivity::IMAP_PORTS);
 }
+
+# 月度统计保存事件（由persistence模块处理）
+# event MailActivity::save_monthly_stats()
+# {
+#     MailActivity::save_stats_to_file();
+#     schedule MailActivity::stats_save_interval { MailActivity::save_monthly_stats() };
+# }
 
 event MailActivity::mail_stats_report()
 {
     print "+==============================================================+";
     print fmt("|| [STATS] Mail Traffic Statistics [%s] ||", strftime("%Y-%m-%d %H:%M:%S", current_time()));
     print "+==============================================================+";
-    print fmt("|| SMTP/POP3/IMAP Connections: %d                          ||", smtp_connections);
-    print fmt("|| STARTTLS Attempts: %d                                   ||", starttls_attempts);
-    print fmt("|| STARTTLS Success: %d                                    ||", starttls_success);
-    print fmt("|| Encrypted Connections: %d                              ||", encrypted_connections);
-    if ( starttls_attempts > 0 ) {
-        local success_rate = (starttls_success * 100) / starttls_attempts;
-        print fmt("|| Encryption Success Rate: %d%%                          ||", success_rate);
-    }
+    print fmt("|| SMTP Connections: %d", MailActivity::smtp_connections);
+    print fmt("|| STARTTLS Attempts: %d", MailActivity::starttls_attempts);
+    print fmt("|| STARTTLS Success: %d", MailActivity::starttls_success);
+    print fmt("|| Encrypted Connections: %d", MailActivity::encrypted_connections);
+    print fmt("|| Send Count: %d", MailActivity::send_count);
+    print fmt("|| Receive Count: %d", MailActivity::receive_count);
+    print fmt("|| Encrypt Count: %d", MailActivity::encrypt_count);
+    print fmt("|| Decrypt Count: %d", MailActivity::decrypt_count);
     print "+==============================================================+";
     
-    # 重新调度下一次报告
+    # 计算加密成功率
+    local success_rate = 0.0;
+    if ( MailActivity::starttls_attempts > 0 ) {
+        success_rate = (MailActivity::starttls_success * 100.0) / MailActivity::starttls_attempts;
+    }
+    print fmt("|| STARTTLS Success Rate: %.2f%%", success_rate);
+    print "+==============================================================+";
+    
+    # 重新调度下次报告
     schedule MailActivity::report_interval { MailActivity::mail_stats_report() };
 }
 
 
 
-# 引入子模块（按依赖顺序加载）
+# 加载子模块
 @load ./mail-activity/utils
 @load ./mail-activity/smtp
 @load ./mail-activity/pop3
 @load ./mail-activity/imap
+@load ./mail-activity/direction
+@load ./mail-activity/persistence

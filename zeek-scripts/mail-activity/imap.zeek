@@ -73,6 +73,36 @@ function handle_imap_client_command(c: connection, line: string)
     info$detail = sanitize_login_info(line);
     info$mailbox_host = fmt("%s", c$id$resp_h);
     
+    # 添加双端监控字段
+    info$site_id = SITE_ID;
+    info$link_id = LINK_ID;
+    
+    # 进行方向判定
+    if ( c$uid in connection_tracks ) {
+        local track = connection_tracks[c$uid];
+        local direction_info = determine_direction(c, track);
+        
+        info$direction_raw = direction_info$direction_raw;
+        info$action = standardize_action(SITE_ID, direction_info$direction_raw);
+        info$evidence = direction_info$evidence;
+        info$confidence = direction_info$confidence;
+        
+        # 记录方向判定日志
+        local flow_info: FlowInfo;
+        flow_info$ts = network_time();
+        flow_info$uid = c$uid;
+        flow_info$orig_h = c$id$orig_h;
+        flow_info$resp_h = c$id$resp_h;
+        flow_info$direction_raw = direction_info$direction_raw;
+        flow_info$action = info$action;
+        flow_info$confidence = direction_info$confidence;
+        flow_info$evidence = direction_info$evidence;
+        flow_info$site_id = SITE_ID;
+        flow_info$link_id = LINK_ID;
+        
+        Log::write(FLOW_LOG, flow_info);
+    }
+    
     # 处理不同的IMAP命令
     if (command == "LOGIN") {
         info$activity = "IMAP_LOGIN";
@@ -388,6 +418,37 @@ event tcp_contents(c: connection, is_orig: bool, seq: count, contents: string)
         session_info$protocol = "IMAP";
         session_info$role = "session";
         session_info$activity = "IMAP_SESSION_START";
+        
+        # 添加双端监控字段
+        session_info$site_id = SITE_ID;
+        session_info$link_id = LINK_ID;
+        
+        # 进行方向判定
+        if ( c$uid in connection_tracks ) {
+            local track = connection_tracks[c$uid];
+            local direction_info = determine_direction(c, track);
+        
+        session_info$direction_raw = direction_info$direction_raw;
+        session_info$action = standardize_action(SITE_ID, direction_info$direction_raw);
+        session_info$evidence = direction_info$evidence;
+        session_info$confidence = direction_info$confidence;
+        
+        # 记录方向判定日志
+        local flow_info: FlowInfo;
+        flow_info$ts = network_time();
+        flow_info$uid = c$uid;
+        flow_info$orig_h = c$id$orig_h;
+        flow_info$resp_h = c$id$resp_h;
+        flow_info$direction_raw = direction_info$direction_raw;
+        flow_info$action = session_info$action;
+        flow_info$confidence = direction_info$confidence;
+        flow_info$evidence = direction_info$evidence;
+        flow_info$site_id = SITE_ID;
+        flow_info$link_id = LINK_ID;
+        
+        Log::write(FLOW_LOG, flow_info);
+        }
+        
         imap_sessions[uid] = session_info;
     }
 }
