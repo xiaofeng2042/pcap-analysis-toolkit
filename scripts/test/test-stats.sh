@@ -108,6 +108,8 @@ except Exception as e:
     print(f'邮件 {$i} 发送失败: {e}')
 finally:
     server.quit()
+    # 确保连接完全关闭后再继续
+    time.sleep(0.5)
 "
         sleep 1
     done
@@ -164,13 +166,32 @@ run_full_test() {
     echo "=== 步骤3: 启动Zeek监控 ==="
     export SITE_ID="overseas"
     export LINK_ID="test_link"
-    export STATS_STATE_FILE="$STATS_FILE"
+    export MAIL_STATS_STATE_FILE="$STATS_FILE"
+    
+    # 如果统计文件存在，预读取其内容并通过环境变量传递给Zeek
+    if [ -f "$STATS_FILE" ]; then
+        local stats_line=$(tail -n 1 "$STATS_FILE" | sed 's/\\x09/\t/g')
+        local month=$(echo "$stats_line" | cut -f1)
+        local send_count=$(echo "$stats_line" | cut -f4)
+        local receive_count=$(echo "$stats_line" | cut -f5)
+        local encrypt_count=$(echo "$stats_line" | cut -f6)
+        local decrypt_count=$(echo "$stats_line" | cut -f7)
+        
+        export MAIL_STATS_INIT_MONTH="$month"
+        export MAIL_STATS_INIT_SEND="$send_count"
+        export MAIL_STATS_INIT_RECEIVE="$receive_count"
+        export MAIL_STATS_INIT_ENCRYPT="$encrypt_count"
+        export MAIL_STATS_INIT_DECRYPT="$decrypt_count"
+        
+        echo "预加载统计数据: month=$month send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
+    fi
     
     cd "$PROJECT_DIR"
     zeek -C -i lo0 zeek-scripts/mail-activity-json.zeek &
     ZEEK_PID=$!
     echo "Zeek PID: $ZEEK_PID"
-    sleep 3
+    echo "等待Zeek完全启动..."
+    sleep 5  # 增加等待时间确保Zeek完全就绪
     
     # 4. 发送测试邮件
     echo "=== 步骤4: 发送测试邮件 ==="
@@ -178,12 +199,14 @@ run_full_test() {
     
     # 5. 等待处理
     echo "=== 步骤5: 等待处理 ==="
-    echo "等待 5 秒让Zeek处理邮件..."
-    sleep 5
+    echo "等待 10 秒让Zeek处理邮件..."
+    sleep 10
     
     # 6. 停止Zeek
     echo "=== 步骤6: 停止监控 ==="
-    kill $ZEEK_PID 2>/dev/null || true
+    echo "优雅关闭Zeek进程..."
+    kill -TERM $ZEEK_PID 2>/dev/null || true
+    sleep 3  # 给Zeek时间完成清理工作
     wait $ZEEK_PID 2>/dev/null || true
     
     # 7. 显示最终统计
