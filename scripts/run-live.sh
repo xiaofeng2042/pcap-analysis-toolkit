@@ -68,7 +68,14 @@ if [[ -f "$STATE_FILE" ]]; then
   echo "[INFO] Loading previous stats from $STATE_FILE"
   # 读取状态文件并设置环境变量
   if [[ -s "$STATE_FILE" ]]; then
-    STATE_LINE=$(tail -n 1 "$STATE_FILE")
+    STATE_LINE_RAW=$(tail -n 1 "$STATE_FILE")
+    STATE_LINE="$STATE_LINE_RAW"
+
+    if [[ "$STATE_LINE" == *\\x09* ]]; then
+      echo "[INFO] Normalizing legacy tab encoding in state file"
+      STATE_LINE=${STATE_LINE//\\x09/$'\t'}
+    fi
+
     IFS=$'\t' read -r MAIL_STATS_INIT_MONTH SITE_FROM_FILE LINK_FROM_FILE MAIL_STATS_INIT_SEND MAIL_STATS_INIT_RECEIVE MAIL_STATS_INIT_ENCRYPT MAIL_STATS_INIT_DECRYPT <<< "$STATE_LINE"
 
     export MAIL_STATS_INIT_MONTH
@@ -77,7 +84,7 @@ if [[ -f "$STATE_FILE" ]]; then
     export MAIL_STATS_INIT_ENCRYPT
     export MAIL_STATS_INIT_DECRYPT
 
-    echo "[INFO] Restored stats: month=$MAIL_STATS_INIT_MONTH send=$MAIL_STATS_INIT_SEND receive=$MAIL_STATS_INIT_RECEIVE encrypt=$MAIL_STATS_INIT_ENCRYPT decrypt=$MAIL_STATS_INIT_DECRYPT"
+    echo "[INFO] Restored stats: month=$MAIL_STATS_INIT_MONTH site=$SITE_FROM_FILE link=$LINK_FROM_FILE send=$MAIL_STATS_INIT_SEND receive=$MAIL_STATS_INIT_RECEIVE encrypt=$MAIL_STATS_INIT_ENCRYPT decrypt=$MAIL_STATS_INIT_DECRYPT"
   fi
 else
   echo "[INFO] No previous state file found, starting fresh"

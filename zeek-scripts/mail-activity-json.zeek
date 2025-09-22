@@ -271,6 +271,24 @@ global mail_stats_report: event();
 const stats_state_delim = "\t";
 global stats_state_loaded: bool = F;
 
+function format_port_set(ports: set[port]): string
+{
+    local formatted = "{";
+    local first = T;
+
+    for ( p in ports ) {
+        if ( first )
+            first = F;
+        else
+            formatted += ", ";
+
+        formatted += fmt("%s", p);
+    }
+
+    formatted += "}";
+    return formatted;
+}
+
 function parse_count(value: string): count
 {
     if ( value == "" )
@@ -335,16 +353,16 @@ function save_stats_to_file()
 
     local f = open(STATS_STATE_FILE);
 
-    local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d",
+    local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d%s",
                      current_month, stats_state_delim,
                      SITE_ID, stats_state_delim,
                      LINK_ID, stats_state_delim,
                      send_count, stats_state_delim,
                      receive_count, stats_state_delim,
                      encrypt_count, stats_state_delim,
-                     decrypt_count);
+                     decrypt_count, "\n");
 
-    print f, line;
+    write_file(f, line);
     close(f);
 
     print fmt("[PERSISTENCE] Stats snapshot saved to %s", STATS_STATE_FILE);
@@ -438,9 +456,9 @@ event zeek_init()
     print "[INFO] MailActivity module initialized with dual-interface monitoring";
     print fmt("[INFO] Site ID: %s, Link ID: %s", MailActivity::SITE_ID, MailActivity::LINK_ID);
     print fmt("[INFO] LAN Interface: %s, Tunnel Interface: %s", MailActivity::LAN_INTERFACE, MailActivity::TUNNEL_INTERFACE);
-    print fmt("[INFO] Monitoring SMTP ports: %s", MailActivity::SMTP_PORTS);
-    print fmt("[INFO] Monitoring POP3 ports: %s", MailActivity::POP3_PORTS);
-    print fmt("[INFO] Monitoring IMAP ports: %s", MailActivity::IMAP_PORTS);
+    print fmt("[INFO] Monitoring SMTP ports: %s", format_port_set(MailActivity::SMTP_PORTS));
+    print fmt("[INFO] Monitoring POP3 ports: %s", format_port_set(MailActivity::POP3_PORTS));
+    print fmt("[INFO] Monitoring IMAP ports: %s", format_port_set(MailActivity::IMAP_PORTS));
 }
 
 # 月度统计保存事件（由persistence模块处理）
