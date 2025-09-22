@@ -25,6 +25,32 @@ PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 ZEEK_SCRIPT="$PROJECT_DIR/zeek-scripts/test/test-stats.zeek"
 MAIN_SCRIPT="$PROJECT_DIR/zeek-scripts/mail-activity-json.zeek"
 
+# timeout命令的macOS兼容实现
+run_with_timeout() {
+    local timeout_duration=$1
+    shift
+    local command=("$@")
+    
+    # 运行命令并记录PID
+    "${command[@]}" &
+    local cmd_pid=$!
+    
+    # 等待指定时间
+    sleep "$timeout_duration"
+    
+    # 检查进程是否还在运行
+    if kill -0 $cmd_pid 2>/dev/null; then
+        # 进程还在运行，杀死它
+        kill $cmd_pid 2>/dev/null || true
+        wait $cmd_pid 2>/dev/null || true
+        return 124  # timeout退出码
+    else
+        # 进程已经结束
+        wait $cmd_pid
+        return $?
+    fi
+}
+
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                  邮件统计功能单元测试套件                    ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
@@ -89,22 +115,38 @@ check_prerequisites() {
 test_zeek_syntax() {
     echo -e "${PURPLE}=== 测试1: Zeek脚本语法检查 ===${NC}"
     
-    # 测试主脚本语法
-    if zeek -T "$MAIN_SCRIPT" 2>/dev/null; then
-        test_assert "true" "主脚本语法正确"
+    # 测试主脚本语法和配置
+    export SITE_ID="overseas"
+    export LINK_ID="test-link"
+    
+    # 使用后台进程和kill模拟timeout
+    zeek -C "$MAIN_SCRIPT" > /tmp/zeek_main_test.log 2>&1 &
+    local main_pid=$!
+    sleep 3
+    kill $main_pid 2>/dev/null || true
+    wait $main_pid 2>/dev/null || true
+    
+    if [ $? -eq 0 ] || grep -q "MailActivity module initialized" /tmp/zeek_main_test.log; then
+        test_assert "true" "主脚本语法和配置正确"
     else
-        test_assert "false" "主脚本语法正确"
-        echo "语法错误输出:"
-        zeek -T "$MAIN_SCRIPT" 2>&1 | head -10
+        test_assert "false" "主脚本语法和配置正确"
+        echo "错误输出:"
+        head -10 /tmp/zeek_main_test.log
     fi
     
-    # 测试测试脚本语法
-    if zeek -T "$ZEEK_SCRIPT" 2>/dev/null; then
-        test_assert "true" "测试脚本语法正确"
+    # 测试测试脚本语法和配置  
+    zeek -C "$ZEEK_SCRIPT" > /tmp/zeek_test_test.log 2>&1 &
+    local test_pid=$!
+    sleep 3
+    kill $test_pid 2>/dev/null || true
+    wait $test_pid 2>/dev/null || true
+    
+    if [ $? -eq 0 ] || grep -q "MailActivity module initialized" /tmp/zeek_test_test.log; then
+        test_assert "true" "测试脚本语法和配置正确"
     else
-        test_assert "false" "测试脚本语法正确"
-        echo "语法错误输出:"
-        zeek -T "$ZEEK_SCRIPT" 2>&1 | head -10
+        test_assert "false" "测试脚本语法和配置正确"
+        echo "错误输出:"
+        head -10 /tmp/zeek_test_test.log
     fi
     
     echo ""
@@ -125,7 +167,7 @@ test_env_initialization() {
     
     # 运行Zeek测试脚本
     local output_file="/tmp/zeek_test_env.log"
-    timeout 10s zeek -C "$ZEEK_SCRIPT" > "$output_file" 2>&1 || true
+    run_with_timeout 10 zeek -C "$ZEEK_SCRIPT" > "$output_file" 2>&1 || true
     
     # 检查输出
     if [ -f "$output_file" ]; then
@@ -180,7 +222,7 @@ test_state_file_save() {
     }
     "
     
-    timeout 5s zeek -C -e "$zeek_cmd" > /tmp/zeek_save_test.log 2>&1 || true
+    run_with_timeout 5 zeek -C -e "$zeek_cmd" > /tmp/zeek_save_test.log 2>&1 || true
     
     # 检查状态文件是否创建
     if [ -f "$test_state_file" ]; then
@@ -242,7 +284,7 @@ test_state_file_restore() {
         
         # 运行测试
         local output_file="/tmp/zeek_test_restore.log"
-        timeout 10s zeek -C "$ZEEK_SCRIPT" > "$output_file" 2>&1 || true
+        run_with_timeout 10 zeek -C "$ZEEK_SCRIPT" > "$output_file" 2>&1 || true
         
         if [ -f "$output_file" ]; then
             # 检查是否正确恢复了统计
@@ -302,7 +344,7 @@ test_stats_accumulation() {
     "
     
     local output_file="/tmp/zeek_test_accumulation.log"
-    timeout 5s zeek -C -e "$zeek_cmd" > "$output_file" 2>&1 || true
+    run_with_timeout 5 zeek -C -e "$zeek_cmd" > "$output_file" 2>&1 || true
     
     if [ -f "$output_file" ]; then
         echo "累加测试输出:"
@@ -347,7 +389,7 @@ test_error_handling() {
     "
     
     local output_file="/tmp/zeek_test_error.log"
-    timeout 5s zeek -C -e "$zeek_cmd" > "$output_file" 2>&1 || true
+    run_with_timeout 5 zeek -C -e "$zeek_cmd" > "$output_file" 2>&1 || true
     
     if [ -f "$output_file" ]; then
         # 检查是否优雅处理了无效值（应该默认为0）

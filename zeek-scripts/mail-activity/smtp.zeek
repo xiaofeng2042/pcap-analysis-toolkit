@@ -101,6 +101,13 @@ event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
         
         Log::write(TLS_LOG, tls_info);
         print "[SMTP] STARTTLS requested";
+    } else if ( command == "." ) {
+        # 邮件数据传输结束标志，触发统计更新
+        print fmt("[DEBUG] SMTP DATA end marker (.) for %s, triggering stats update", uid);
+        generate_mail_flow_record(c, info);
+        info$activity = "SMTP_DATA_END";
+        info$role = "client";
+        print "[SMTP] DATA transmission completed";
     } else {
         info$activity = fmt("SMTP_%s", command);
         info$role = "client";
@@ -138,7 +145,12 @@ event smtp_reply(c: connection, is_orig: bool, code: count, cmd: string, msg: st
         print fmt("[SMTP] Server ready: %d %s (server initiated)", code, msg);
     }
     else if ( code >= 200 && code < 300 ) {
-        if ( cmd == "STARTTLS" ) {
+        if ( cmd == "DATA" && code == 250 ) {
+            # 邮件数据传输成功完成，触发统计更新
+            print fmt("[DEBUG] SMTP DATA success (250 OK) for %s, triggering stats update", uid);
+            generate_mail_flow_record(c, info);
+            info$activity = "SMTP_DATA_SUCCESS";
+        } else if ( cmd == "STARTTLS" ) {
             ++starttls_success;
             info$activity = "SMTP_STARTTLS_SUCCESS";
             

@@ -26,6 +26,32 @@ OUTPUT_DIR="$PROJECT_DIR/output"
 STATE_DIR="$OUTPUT_DIR/state"
 STATS_FILE="$STATE_DIR/mail_stats_state.tsv"
 
+# timeout命令的macOS兼容实现
+run_with_timeout() {
+    local timeout_duration=$1
+    shift
+    local command=("$@")
+    
+    # 运行命令并记录PID
+    "${command[@]}" &
+    local cmd_pid=$!
+    
+    # 等待指定时间
+    sleep "$timeout_duration"
+    
+    # 检查进程是否还在运行
+    if kill -0 $cmd_pid 2>/dev/null; then
+        # 进程还在运行，杀死它
+        kill $cmd_pid 2>/dev/null || true
+        wait $cmd_pid 2>/dev/null || true
+        return 124  # timeout退出码
+    else
+        # 进程已经结束
+        wait $cmd_pid
+        return $?
+    fi
+}
+
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                  邮件统计功能集成测试套件                    ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
@@ -207,7 +233,7 @@ test_fresh_start() {
     
     # 启动Zeek监控（后台）
     cd "$PROJECT_DIR"
-    timeout 15s ./scripts/run-live.sh lo0 > /tmp/integration_test_fresh.log 2>&1 &
+    ./scripts/run-live.sh lo0 > /tmp/integration_test_fresh.log 2>&1 &
     local zeek_pid=$!
     
     echo "Zeek监控已启动 (PID: $zeek_pid)，等待3秒..."
@@ -273,7 +299,7 @@ test_stats_resume() {
     
     # 启动Zeek监控（后台）
     cd "$PROJECT_DIR"
-    timeout 15s ./scripts/run-live.sh lo0 > /tmp/integration_test_resume.log 2>&1 &
+    ./scripts/run-live.sh lo0 > /tmp/integration_test_resume.log 2>&1 &
     local zeek_pid=$!
     
     echo "Zeek监控已启动，等待3秒..."
@@ -340,7 +366,7 @@ test_offline_stats() {
     
     # 运行离线分析
     cd "$PROJECT_DIR"
-    timeout 30s ./scripts/run-offline.sh "$pcap_file" > /tmp/integration_test_offline.log 2>&1 || true
+    run_with_timeout 30 ./scripts/run-offline.sh "$pcap_file" > /tmp/integration_test_offline.log 2>&1 || true
     
     # 检查输出
     if [ -f /tmp/integration_test_offline.log ]; then
@@ -391,7 +417,7 @@ test_multiple_restarts() {
         
         # 启动Zeek
         cd "$PROJECT_DIR"
-        timeout 10s ./scripts/run-live.sh lo0 > "/tmp/integration_test_restart_${round}.log" 2>&1 &
+        ./scripts/run-live.sh lo0 > "/tmp/integration_test_restart_${round}.log" 2>&1 &
         local zeek_pid=$!
         
         sleep 2
@@ -472,7 +498,7 @@ test_month_rollover_simulation() {
     }
     "
     
-    timeout 5s zeek -C -e "$zeek_cmd" > /tmp/integration_test_month.log 2>&1 || true
+    run_with_timeout 5 zeek -C -e "$zeek_cmd" > /tmp/integration_test_month.log 2>&1 || true
     
     # 检查输出
     if [ -f /tmp/integration_test_month.log ]; then

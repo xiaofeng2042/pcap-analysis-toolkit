@@ -131,7 +131,13 @@ run_zeek_monitoring() {
     
     # 启动Zeek监控 - 显示调试输出，忽略校验和错误
     cd "$PROJECT_DIR"
-    timeout ${duration}s zeek -C -i lo0 zeek-scripts/mail-activity-json.zeek || true
+    
+    # 使用后台进程和sleep模拟timeout
+    zeek -C -i lo0 zeek-scripts/mail-activity-json.zeek &
+    local zeek_pid=$!
+    sleep ${duration}
+    kill $zeek_pid 2>/dev/null || true
+    wait $zeek_pid 2>/dev/null || true
     
     echo "Zeek监控完成"
     echo ""

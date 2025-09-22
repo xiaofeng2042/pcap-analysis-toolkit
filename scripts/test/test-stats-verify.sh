@@ -26,6 +26,32 @@ OUTPUT_DIR="$PROJECT_DIR/output"
 STATE_DIR="$OUTPUT_DIR/state"
 STATS_FILE="$STATE_DIR/mail_stats_state.tsv"
 
+# timeout命令的macOS兼容实现
+run_with_timeout() {
+    local timeout_duration=$1
+    shift
+    local command=("$@")
+    
+    # 运行命令并记录PID
+    "${command[@]}" &
+    local cmd_pid=$!
+    
+    # 等待指定时间
+    sleep "$timeout_duration"
+    
+    # 检查进程是否还在运行
+    if kill -0 $cmd_pid 2>/dev/null; then
+        # 进程还在运行，杀死它
+        kill $cmd_pid 2>/dev/null || true
+        wait $cmd_pid 2>/dev/null || true
+        return 124  # timeout退出码
+    else
+        # 进程已经结束
+        wait $cmd_pid
+        return $?
+    fi
+}
+
 # GreenMail配置
 SMTP_HOST="localhost"
 SMTP_PORT="3025"
@@ -280,6 +306,8 @@ parse_stats_file() {
     fi
     
     local stats_line=$(tail -n 1 "$stats_file")
+    # 处理 \x09 编码的制表符
+    stats_line=$(echo "$stats_line" | sed 's/\\x09/\t/g')
     local send_count=$(echo "$stats_line" | cut -f4)
     local receive_count=$(echo "$stats_line" | cut -f5)
     local encrypt_count=$(echo "$stats_line" | cut -f6)
@@ -309,7 +337,7 @@ test_precise_send_stats() {
     
     # 启动Zeek监控
     cd "$PROJECT_DIR"
-    timeout 20s ./scripts/run-live.sh lo0 > /tmp/verify_test_send.log 2>&1 &
+    ./scripts/run-live.sh lo0 > /tmp/verify_test_send.log 2>&1 &
     local zeek_pid=$!
     
     echo "Zeek监控已启动，等待3秒..."
@@ -359,7 +387,7 @@ test_send_receive_correlation() {
     
     # 启动Zeek监控
     cd "$PROJECT_DIR"
-    timeout 25s ./scripts/run-live.sh lo0 > /tmp/verify_test_both.log 2>&1 &
+    ./scripts/run-live.sh lo0 > /tmp/verify_test_both.log 2>&1 &
     local zeek_pid=$!
     
     echo "Zeek监控已启动，等待3秒..."
@@ -427,7 +455,7 @@ test_accumulation_accuracy() {
     
     # 启动Zeek监控
     cd "$PROJECT_DIR"
-    timeout 20s ./scripts/run-live.sh lo0 > /tmp/verify_test_accum.log 2>&1 &
+    ./scripts/run-live.sh lo0 > /tmp/verify_test_accum.log 2>&1 &
     local zeek_pid=$!
     
     echo "Zeek监控已启动，等待3秒..."
@@ -478,7 +506,7 @@ test_concurrent_email_stats() {
     
     # 启动Zeek监控
     cd "$PROJECT_DIR"
-    timeout 30s ./scripts/run-live.sh lo0 > /tmp/verify_test_concurrent.log 2>&1 &
+    ./scripts/run-live.sh lo0 > /tmp/verify_test_concurrent.log 2>&1 &
     local zeek_pid=$!
     
     echo "Zeek监控已启动，等待3秒..."
