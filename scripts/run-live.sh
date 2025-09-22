@@ -62,6 +62,27 @@ FILTER=${FILTER:-"port 25 or port 465 or port 587 or port 1025 or port 2525 or p
 
 mkdir -p "$OUTPUT_DIR" "$STATE_DIR"
 
+# 从状态文件恢复环境变量（如果存在）
+STATE_FILE="$STATE_DIR/mail_stats_state.tsv"
+if [[ -f "$STATE_FILE" ]]; then
+  echo "[INFO] Loading previous stats from $STATE_FILE"
+  # 读取状态文件并设置环境变量
+  if [[ -s "$STATE_FILE" ]]; then
+    STATE_LINE=$(tail -n 1 "$STATE_FILE")
+    IFS=$'\t' read -r MAIL_STATS_INIT_MONTH SITE_FROM_FILE LINK_FROM_FILE MAIL_STATS_INIT_SEND MAIL_STATS_INIT_RECEIVE MAIL_STATS_INIT_ENCRYPT MAIL_STATS_INIT_DECRYPT <<< "$STATE_LINE"
+
+    export MAIL_STATS_INIT_MONTH
+    export MAIL_STATS_INIT_SEND
+    export MAIL_STATS_INIT_RECEIVE
+    export MAIL_STATS_INIT_ENCRYPT
+    export MAIL_STATS_INIT_DECRYPT
+
+    echo "[INFO] Restored stats: month=$MAIL_STATS_INIT_MONTH send=$MAIL_STATS_INIT_SEND receive=$MAIL_STATS_INIT_RECEIVE encrypt=$MAIL_STATS_INIT_ENCRYPT decrypt=$MAIL_STATS_INIT_DECRYPT"
+  fi
+else
+  echo "[INFO] No previous state file found, starting fresh"
+fi
+
 echo "[INFO] Writing logs to $OUTPUT_DIR"
 echo "[INFO] Capture filter: $FILTER"
 
@@ -98,6 +119,11 @@ if [[ "$USE_DOCKER" == "true" ]]; then
     -e "TUNNEL_INTERFACE=${TUNNEL_INTERFACE:-tap_tap}" \
     -e "REPORT_INTERVAL=${REPORT_INTERVAL:-30}" \
     -e "MAIL_STATS_STATE_FILE=/state/mail_stats_state.tsv" \
+    -e "MAIL_STATS_INIT_MONTH=${MAIL_STATS_INIT_MONTH:-}" \
+    -e "MAIL_STATS_INIT_SEND=${MAIL_STATS_INIT_SEND:-}" \
+    -e "MAIL_STATS_INIT_RECEIVE=${MAIL_STATS_INIT_RECEIVE:-}" \
+    -e "MAIL_STATS_INIT_ENCRYPT=${MAIL_STATS_INIT_ENCRYPT:-}" \
+    -e "MAIL_STATS_INIT_DECRYPT=${MAIL_STATS_INIT_DECRYPT:-}" \
     zeek/zeek \
     zeek -C -i "$IFACE" -f "$FILTER" /scripts/mail-activity-json.zeek
 else

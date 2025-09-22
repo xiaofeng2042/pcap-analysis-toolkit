@@ -12,6 +12,7 @@
 @load base/protocols/smtp
 @load base/protocols/pop3
 @load base/protocols/ssl
+@load base/utils/files
 
 # JSON日志配置
 redef LogAscii::use_json = T;
@@ -267,6 +268,123 @@ const IMAP_PORTS: set[port] = {
 # 前向声明事件
 global mail_stats_report: event();
 
+const stats_state_delim = "\t";
+global stats_state_loaded: bool = F;
+
+function parse_count(value: string): count
+{
+    if ( value == "" )
+        return 0;
+
+    return to_count(value);
+}
+
+function restore_stats_from_env(): bool
+{
+    local init_month = getenv("MAIL_STATS_INIT_MONTH");
+    local init_send = getenv("MAIL_STATS_INIT_SEND");
+    local init_receive = getenv("MAIL_STATS_INIT_RECEIVE");
+    local init_encrypt = getenv("MAIL_STATS_INIT_ENCRYPT");
+    local init_decrypt = getenv("MAIL_STATS_INIT_DECRYPT");
+
+    if ( init_month == "" )
+        return F;
+
+    current_month = init_month;
+    send_count = parse_count(init_send);
+    receive_count = parse_count(init_receive);
+    encrypt_count = parse_count(init_encrypt);
+    decrypt_count = parse_count(init_decrypt);
+
+    stats_state_loaded = T;
+
+    print fmt("[PERSISTENCE] Restored stats from environment: month=%s send=%d receive=%d encrypt=%d decrypt=%d",
+              current_month, send_count, receive_count, encrypt_count, decrypt_count);
+
+    return T;
+}
+
+function get_current_month(): string
+{
+    return strftime("%Y-%m", current_time());
+}
+
+function load_stats_from_file()
+{
+    if ( stats_state_loaded )
+        return;
+
+    if ( restore_stats_from_env() )
+        return;
+
+    if ( STATS_STATE_FILE != "" )
+        print fmt("[PERSISTENCE] State file %s not preloaded; starting fresh", STATS_STATE_FILE);
+    else
+        print "[PERSISTENCE] No state file configured; statistics start fresh";
+
+    stats_state_loaded = T;
+}
+
+function save_stats_to_file()
+{
+    if ( STATS_STATE_FILE == "" )
+        return;
+
+    if ( current_month == "" )
+        current_month = get_current_month();
+
+    local f = open(STATS_STATE_FILE);
+
+    local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d",
+                     current_month, stats_state_delim,
+                     SITE_ID, stats_state_delim,
+                     LINK_ID, stats_state_delim,
+                     send_count, stats_state_delim,
+                     receive_count, stats_state_delim,
+                     encrypt_count, stats_state_delim,
+                     decrypt_count);
+
+    print f, line;
+    close(f);
+
+    print fmt("[PERSISTENCE] Stats snapshot saved to %s", STATS_STATE_FILE);
+}
+
+function update_monthly_stats(action: string, encrypted: bool, decrypted: bool)
+{
+    if ( !stats_state_loaded )
+        load_stats_from_file();
+
+    local current = get_current_month();
+    if ( current_month == "" )
+        current_month = current;
+
+    if ( current_month != current ) {
+        save_stats_to_file();
+
+        current_month = current;
+        send_count = 0;
+        receive_count = 0;
+        encrypt_count = 0;
+        decrypt_count = 0;
+
+        print fmt("[PERSISTENCE] Switched to month: %s", current_month);
+    }
+
+    if ( action == "send" )
+        ++send_count;
+    else if ( action == "receive" )
+        ++receive_count;
+
+    if ( encrypted )
+        ++encrypt_count;
+
+    if ( decrypted )
+        ++decrypt_count;
+
+    save_stats_to_file();
+}
+
 # Zeek初始化事件
 event zeek_init()
 {
@@ -360,6 +478,12 @@ event MailActivity::mail_stats_report()
 }
 
 
+event zeek_done()
+{
+    save_stats_to_file();
+}
+
+
 
 # 加载子模块
 @load ./mail-activity/utils
@@ -367,5 +491,4 @@ event MailActivity::mail_stats_report()
 @load ./mail-activity/pop3
 @load ./mail-activity/imap
 @load ./mail-activity/direction
-@load ./mail-activity/persistence
 # @load ./mail-activity/persistence_simple  # Module syntax issue
