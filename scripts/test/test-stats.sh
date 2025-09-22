@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # 配置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 OUTPUT_DIR="$PROJECT_DIR/output"
 STATE_DIR="$OUTPUT_DIR/state"
 STATS_FILE="$STATE_DIR/mail_stats_state.tsv"
@@ -28,7 +28,8 @@ show_current_stats() {
     if [ -f "$STATS_FILE" ]; then
         echo "统计文件: $STATS_FILE"
         echo "内容:"
-        cat "$STATS_FILE" | while IFS=$'\t' read -r month site_id link_id send_count receive_count encrypt_count decrypt_count; do
+        # 处理 \x09 编码的制表符
+        sed 's/\\x09/\t/g' "$STATS_FILE" | while IFS=$'\t' read -r month site_id link_id send_count receive_count encrypt_count decrypt_count; do
             echo "  月份: $month"
             echo "  站点: $site_id"
             echo "  链路: $link_id"
@@ -54,13 +55,12 @@ reset_stats() {
 # 函数：启动GreenMail测试服务器
 start_greenmail() {
     echo -e "${BLUE}[GREENMAIL] 启动测试邮件服务器...${NC}"
-    cd "$PROJECT_DIR/docker/greenmail"
     
     # 检查是否已经运行
-    if docker-compose ps | grep -q "Up"; then
+    if docker-compose -f "$PROJECT_DIR/docker/greenmail/docker-compose.yml" ps | grep -q "Up"; then
         echo "GreenMail 已经在运行"
     else
-        docker-compose up -d
+        docker-compose -f "$PROJECT_DIR/docker/greenmail/docker-compose.yml" up -d
         echo "等待 GreenMail 启动..."
         sleep 5
     fi
@@ -71,9 +71,7 @@ start_greenmail() {
 # 函数：停止GreenMail
 stop_greenmail() {
     echo -e "${YELLOW}[GREENMAIL] 停止测试邮件服务器...${NC}"
-    cd "$PROJECT_DIR/docker/greenmail"
-    docker-compose down
-    cd "$PROJECT_DIR"
+    docker-compose -f "$PROJECT_DIR/docker/greenmail/docker-compose.yml" down
     echo ""
 }
 
@@ -127,14 +125,16 @@ run_zeek_monitoring() {
     # 设置环境变量
     export SITE_ID="overseas"
     export LINK_ID="test_link"
-    export STATS_STATE_FILE="$STATS_FILE"
+    export MAIL_STATS_STATE_FILE="$STATS_FILE"
     
     # 启动Zeek监控 - 显示调试输出，忽略校验和错误
     cd "$PROJECT_DIR"
     
-    # 使用后台进程和sleep模拟timeout
-    zeek -C -i lo0 zeek-scripts/mail-activity-json.zeek &
+    # 使用后台进程和sleep模拟timeout，显式传递环境变量
+    env SITE_ID="overseas" LINK_ID="test_link" MAIL_STATS_STATE_FILE="$STATS_FILE" \
+        zeek -C -i lo0 zeek-scripts/mail-activity-json.zeek &
     local zeek_pid=$!
+    echo "Zeek PID: $zeek_pid"
     sleep ${duration}
     kill $zeek_pid 2>/dev/null || true
     wait $zeek_pid 2>/dev/null || true
@@ -167,7 +167,7 @@ run_full_test() {
     export STATS_STATE_FILE="$STATS_FILE"
     
     cd "$PROJECT_DIR"
-    zeek -i lo0 zeek-scripts/mail-activity-json.zeek &
+    zeek -C -i lo0 zeek-scripts/mail-activity-json.zeek &
     ZEEK_PID=$!
     echo "Zeek PID: $ZEEK_PID"
     sleep 3
