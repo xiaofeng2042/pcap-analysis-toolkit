@@ -2,13 +2,87 @@
 # 处理月度统计的持久化存储
 
 @load base/utils/time
+@load ../mail-activity-json.zeek
 
 module MailActivity;
+
+# 导入必要的全局变量声明
+# STATS_STATE_FILE 已在主文件中定义为 option 变量
+global SITE_ID: string;
+global LINK_ID: string;
+global current_month: string;
+global send_count: count;
+global receive_count: count;
+global encrypt_count: count;
+global decrypt_count: count;
+
+# 状态文件分隔符
+const state_delim = "\t";
 
 # 获取当前月份字符串
 function get_current_month(): string
 {
     return strftime("%Y-%m", current_time());
+}
+
+# 保存统计到文件
+function save_stats_to_file()
+{
+    if ( STATS_STATE_FILE == "" )
+        return;
+
+    local f = open(STATS_STATE_FILE, "w");
+    if ( f == nil ) {
+        print fmt("[PERSISTENCE] Unable to open %s for write", STATS_STATE_FILE);
+        return;
+    }
+
+    local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d",
+                    current_month, state_delim,
+                    SITE_ID, state_delim,
+                    LINK_ID, state_delim,
+                    send_count, state_delim,
+                    receive_count, state_delim,
+                    encrypt_count, state_delim,
+                    decrypt_count);
+
+    print f, line;
+    close(f);
+    print fmt("[PERSISTENCE] Stats snapshot saved to %s", STATS_STATE_FILE);
+}
+
+# 从文件加载统计数据
+function load_stats_from_file()
+{
+    if ( STATS_STATE_FILE == "" )
+        return;
+
+    local f = open(STATS_STATE_FILE, "r");
+    if ( f == nil ) {
+        print fmt("[PERSISTENCE] No existing state at %s, starting fresh", STATS_STATE_FILE);
+        return;
+    }
+
+    local line = read_line(f);
+    close(f);
+
+    if ( line == "" )
+        return;
+
+    local fields = split(line, state_delim);
+    if ( |fields| < 7 ) {
+        print fmt("[PERSISTENCE] Corrupted state line: %s", line);
+        return;
+    }
+
+    current_month = fields[0];
+    send_count    = to_count(fields[3]);
+    receive_count = to_count(fields[4]);
+    encrypt_count = to_count(fields[5]);
+    decrypt_count = to_count(fields[6]);
+
+    print fmt("[PERSISTENCE] Restored stats: month=%s send=%d receive=%d encrypt=%d decrypt=%d",
+              current_month, send_count, receive_count, encrypt_count, decrypt_count);
 }
 
 # 更新月度统计
@@ -52,49 +126,8 @@ function update_monthly_stats(action: string, encrypted: bool, decrypted: bool)
     }
 }
 
-# 保存统计到文件 - 简化实现
-function save_stats_to_file()
+# Zeek 正常退出时保存状态
+event zeek_done()
 {
-    # 简化版本：直接记录到 mail_stats.log
-    local stats_info: StatsInfo;
-    stats_info$month = current_month;
-    stats_info$site_id = SITE_ID;
-    stats_info$link_id = LINK_ID;
-    stats_info$send_count = send_count;
-    stats_info$receive_count = receive_count;
-    stats_info$encrypt_count = encrypt_count;
-    stats_info$decrypt_count = decrypt_count;
-    stats_info$last_update = current_time();
-    
-    Log::write(STATS_LOG, stats_info);
-    
-    print fmt("[PERSISTENCE] Stats saved to log for month: %s (send:%d receive:%d encrypt:%d decrypt:%d)", 
-              current_month, send_count, receive_count,
-              encrypt_count, decrypt_count);
-}
-
-# 从文件加载统计数据 - 简化实现
-function load_stats_from_file()
-{
-    # 简化版本：从文件加载在实际部署中由外部脚本处理
-    # 这里初始化为0，重启后统计重新开始
-    send_count = 0;
-    receive_count = 0;
-    encrypt_count = 0;
-    decrypt_count = 0;
-    
-    print fmt("[PERSISTENCE] Initialized stats for month: %s (stats reset to 0)", current_month);
-    
-    # 在mail_stats.log中记录重启事件
-    local restart_info: StatsInfo;
-    restart_info$month = current_month;
-    restart_info$site_id = SITE_ID;
-    restart_info$link_id = LINK_ID;
-    restart_info$send_count = 0;
-    restart_info$receive_count = 0;
-    restart_info$encrypt_count = 0;
-    restart_info$decrypt_count = 0;
-    restart_info$last_update = current_time();
-    
-    Log::write(STATS_LOG, restart_info);
+    save_stats_to_file();
 }

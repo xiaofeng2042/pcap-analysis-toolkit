@@ -36,6 +36,7 @@ fi
 IFACE=$1
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 OUTPUT_DIR=${2:-"$ROOT_DIR/output/live-$(date +%Y%m%d-%H%M%S)"}
+STATE_DIR=${STATE_DIR:-"$ROOT_DIR/output/state"}
 SCRIPT="$ROOT_DIR/zeek-scripts/mail-activity-json.zeek"
 
 # Load environment variables from .env file if it exists
@@ -59,7 +60,7 @@ fi
 # GreenMail test ports: 3025 (SMTP), 3110 (POP3), 3143 (IMAP), 3465 (SMTPS), 3993 (IMAPS), 3995 (POP3S)
 FILTER=${FILTER:-"port 25 or port 465 or port 587 or port 1025 or port 2525 or port 110 or port 995 or port 143 or port 993 or port 3025 or port 3110 or port 3143 or port 3465 or port 3993 or port 3995"}
 
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR" "$STATE_DIR"
 
 echo "[INFO] Writing logs to $OUTPUT_DIR"
 echo "[INFO] Capture filter: $FILTER"
@@ -88,6 +89,7 @@ if [[ "$USE_DOCKER" == "true" ]]; then
     --cap-add=NET_ADMIN \
     --cap-add=NET_RAW \
     -v "$OUTPUT_DIR:/logs" \
+    -v "$STATE_DIR:/state" \
     -v "$ROOT_DIR/zeek-scripts:/scripts" \
     -w /logs \
     -e "SITE_ID=${SITE_ID:-}" \
@@ -95,6 +97,7 @@ if [[ "$USE_DOCKER" == "true" ]]; then
     -e "LAN_INTERFACE=${LAN_INTERFACE:-eno1}" \
     -e "TUNNEL_INTERFACE=${TUNNEL_INTERFACE:-tap_tap}" \
     -e "REPORT_INTERVAL=${REPORT_INTERVAL:-30}" \
+    -e "MAIL_STATS_STATE_FILE=/state/mail_stats_state.tsv" \
     zeek/zeek \
     zeek -C -i "$IFACE" -f "$FILTER" /scripts/mail-activity-json.zeek
 else
@@ -108,5 +111,6 @@ else
   fi
   
   cd "$OUTPUT_DIR"
-  zeek -C -i "$IFACE" -f "$FILTER" "$SCRIPT"
+  MAIL_STATS_STATE_FILE="$STATE_DIR/mail_stats_state.tsv" \
+    zeek -C -i "$IFACE" -f "$FILTER" "$SCRIPT"
 fi
