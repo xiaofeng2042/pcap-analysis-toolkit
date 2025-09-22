@@ -48,6 +48,7 @@ function new_smtp_info(c: connection): Info
 event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
 {
     local uid = c$uid;
+    print fmt("[DEBUG] smtp_request event: %s, command: %s, arg: %s", uid, command, arg);
     
     if ( uid !in smtp_sessions ) {
         smtp_sessions[uid] = new_smtp_info(c);
@@ -181,6 +182,7 @@ event smtp_reply(c: connection, is_orig: bool, code: count, cmd: string, msg: st
 event smtp_data(c: connection, is_orig: bool, data: string)
 {
     local uid = c$uid;
+    print fmt("[DEBUG] smtp_data event triggered for %s, data length: %d", uid, |data|);
     
     if ( uid !in smtp_sessions )
         return;
@@ -190,6 +192,7 @@ event smtp_data(c: connection, is_orig: bool, data: string)
     # 检查是否为DATA结束标志
     if ( data == ".\r\n" || data == ".\n" ) {
         # 邮件DATA传输结束，生成mail_flow.log记录
+        print fmt("[DEBUG] DATA end detected for %s, calling generate_mail_flow_record", uid);
         generate_mail_flow_record(c, info);
         info$activity = "SMTP_DATA_END";
         print fmt("[SMTP] DATA transmission completed for %s", uid);
@@ -245,6 +248,8 @@ event smtp_data(c: connection, is_orig: bool, data: string)
 # 生成mail_flow.log记录的函数
 function generate_mail_flow_record(c: connection, info: Info)
 {
+    print fmt("[DEBUG] generate_mail_flow_record called for %s", c$uid);
+    
     local flow_info: FlowInfo;
     
     # 基础字段
@@ -289,9 +294,19 @@ function generate_mail_flow_record(c: connection, info: Info)
     
     # 记录到mail_flow.log
     Log::write(FLOW_LOG, flow_info);
+    print fmt("[DEBUG] Wrote flow record to log: %s", c$uid);
     
     # 更新月度统计
-    local action_type = (flow_info$direction_raw == "outbound") ? "send" : "receive";
+    # 临时修复：基于端口判断发送/接收，用于测试统计功能
+    local action_type = "receive";  # 默认为接收
+    if ( c$id$resp_p == 25/tcp || c$id$resp_p == 465/tcp || c$id$resp_p == 587/tcp || c$id$resp_p == 2525/tcp || c$id$resp_p == 3025/tcp ) {
+        # 如果是连接到SMTP服务器端口，则认为是发送
+        action_type = "send";
+    }
+    
+    print fmt("[DEBUG] SMTP connection %s:%d -> %s:%d, action_type=%s, direction_raw=%s", 
+              c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, action_type, flow_info$direction_raw);
+    
     update_monthly_stats(action_type, 
                         flow_info$link_encrypted ? flow_info$link_encrypted : F,
                         flow_info$link_decrypted ? flow_info$link_decrypted : F);

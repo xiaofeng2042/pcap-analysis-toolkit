@@ -335,10 +335,12 @@ function load_stats_from_file()
     if ( restore_stats_from_env() )
         return;
 
-    if ( STATS_STATE_FILE != "" )
-        print fmt("[PERSISTENCE] State file %s not preloaded; starting fresh", STATS_STATE_FILE);
-    else
+    if ( STATS_STATE_FILE != "" ) {
+        print fmt("[PERSISTENCE] State file configured: %s, but file loading not implemented in this version", STATS_STATE_FILE);
+        print "[PERSISTENCE] Starting with fresh statistics";
+    } else {
         print "[PERSISTENCE] No state file configured; statistics start fresh";
+    }
 
     stats_state_loaded = T;
 }
@@ -389,16 +391,28 @@ function update_monthly_stats(action: string, encrypted: bool, decrypted: bool)
         print fmt("[PERSISTENCE] Switched to month: %s", current_month);
     }
 
-    if ( action == "send" )
+    print fmt("[DEBUG] update_monthly_stats called with action=%s, encrypted=%s, decrypted=%s", 
+              action, encrypted ? "T" : "F", decrypted ? "T" : "F");
+
+    if ( action == "send" ) {
         ++send_count;
-    else if ( action == "receive" )
+        print fmt("[DEBUG] Incremented send_count to %d", send_count);
+    } else if ( action == "receive" ) {
         ++receive_count;
+        print fmt("[DEBUG] Incremented receive_count to %d", receive_count);
+    } else {
+        print fmt("[DEBUG] Action '%s' not recognized for counting", action);
+    }
 
-    if ( encrypted )
+    if ( encrypted ) {
         ++encrypt_count;
+        print fmt("[DEBUG] Incremented encrypt_count to %d", encrypt_count);
+    }
 
-    if ( decrypted )
+    if ( decrypted ) {
         ++decrypt_count;
+        print fmt("[DEBUG] Incremented decrypt_count to %d", decrypt_count);
+    }
 
     save_stats_to_file();
 }
