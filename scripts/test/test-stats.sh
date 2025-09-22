@@ -29,8 +29,8 @@ show_current_stats() {
         echo "统计文件: $STATS_FILE"
         echo "内容:"
         # 处理 \x09 编码的制表符
-        sed 's/\\x09/\t/g' "$STATS_FILE" | while IFS=$'\t' read -r month site_id link_id send_count receive_count encrypt_count decrypt_count; do
-            echo "  月份: $month"
+        sed 's/\\x09/\t/g' "$STATS_FILE" | while IFS=$'\t' read -r date site_id link_id send_count receive_count encrypt_count decrypt_count; do
+            echo "  日期: $date"
             echo "  站点: $site_id"
             echo "  链路: $link_id"
             echo "  发送数: $send_count"
@@ -170,35 +170,35 @@ run_full_test() {
     
     # 如果统计文件存在，预读取其内容并通过环境变量传递给Zeek
     if [ -f "$STATS_FILE" ]; then
-        # 获取当前月份（YYYY-MM格式）
-        local current_month=$(date "+%Y-%m")
+        # 获取当前日期（YYYY-MM-DD格式）
+        local current_date=$(date "+%Y-%m-%d")
         
-        # 查找当前月份的数据行，如果没找到则使用最新月份的数据
-        local stats_line=$(sed 's/\\x09/\t/g' "$STATS_FILE" | grep "^$current_month" | head -n 1)
+        # 查找当前日期的数据行，如果没找到则使用最新日期的数据
+        local stats_line=$(sed 's/\\x09/\t/g' "$STATS_FILE" | grep "^$current_date" | head -n 1)
         
-        # 如果当前月份没有数据，查找最新的月份数据（按时间倒序）
+        # 如果当前日期没有数据，查找最新的日期数据（按时间倒序）
         if [ -z "$stats_line" ]; then
-            echo "当前月份 $current_month 没有数据，使用最新月份数据"
+            echo "当前日期 $current_date 没有数据，使用最新日期数据"
             stats_line=$(sed 's/\\x09/\t/g' "$STATS_FILE" | sort -t$'\t' -k1,1r | head -n 1)
         fi
         
         if [ -n "$stats_line" ]; then
-            local month=$(echo "$stats_line" | cut -f1)
+            local date=$(echo "$stats_line" | cut -f1)
             local send_count=$(echo "$stats_line" | cut -f4)
             local receive_count=$(echo "$stats_line" | cut -f5)
             local encrypt_count=$(echo "$stats_line" | cut -f6)
             local decrypt_count=$(echo "$stats_line" | cut -f7)
             
-            export MAIL_STATS_INIT_MONTH="$month"
+            export MAIL_STATS_INIT_DATE="$date"
             export MAIL_STATS_INIT_SEND="$send_count"
             export MAIL_STATS_INIT_RECEIVE="$receive_count"
             export MAIL_STATS_INIT_ENCRYPT="$encrypt_count"
             export MAIL_STATS_INIT_DECRYPT="$decrypt_count"
             
-            if [ "$month" = "$current_month" ]; then
-                echo "预加载统计数据（当前月份）: month=$month send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
+            if [ "$date" = "$current_date" ]; then
+                echo "预加载统计数据（当前日期）: date=$date send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
             else
-                echo "预加载统计数据（使用 $month 数据，当前月份 $current_month 无数据）: send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
+                echo "预加载统计数据（使用 $date 数据，当前日期 $current_date 无数据）: send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
             fi
         else
             echo "统计文件为空或格式错误"

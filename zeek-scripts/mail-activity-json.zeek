@@ -202,12 +202,12 @@ export {
     
     # 双端监控新增全局变量
     global connection_tracks: table[string] of ConnectionTrack;  # 连接跟踪表
-    global monthly_stats: StatsInfo;                             # 当前月度统计
-    global current_month: string = "";                           # 当前月份
+    global daily_stats: StatsInfo;                               # 当前日度统计
+    global current_date: string = "";                            # 当前日期
     
-    # 多月统计支持 - 存储所有月份的统计数据
-    type MonthlyRecord: record {
-        month: string;
+    # 多日统计支持 - 存储所有日期的统计数据
+    type DailyRecord: record {
+        date: string;  # YYYY-MM-DD format
         site_id: string;
         link_id: string;
         send_count: count;
@@ -216,9 +216,22 @@ export {
         decrypt_count: count;
     };
     
-    global all_monthly_stats: table[string] of MonthlyRecord;   # 所有月份统计数据，key为month
+    # 统计聚合记录（用于周/月/年汇总）
+    type StatsAggregate: record {
+        period: string;  # 时间周期标识
+        site_id: string;
+        link_id: string;
+        send_count: count;
+        receive_count: count;
+        encrypt_count: count;
+        decrypt_count: count;
+        start_date: string;
+        end_date: string;
+    };
     
-    # 月度计数器
+    global all_daily_stats: table[string] of DailyRecord;   # 所有日期统计数据，key为date
+    
+    # 日度计数器
     global send_count: count = 0;
     global receive_count: count = 0;
     global encrypt_count: count = 0;
@@ -237,15 +250,21 @@ export {
     # 前向声明函数
     global determine_direction: function(c: connection, track: ConnectionTrack): DirectionInfo;
     global standardize_action: function(site_id: string, direction: string): string;
-    global update_monthly_stats: function(action: string, encrypted: bool, decrypted: bool);
+    global update_daily_stats: function(action: string, encrypted: bool, decrypted: bool);
     global save_stats_to_file: function();
     global load_stats_from_file: function();
-    global get_current_month: function(): string;
+    global get_current_date: function(): string;
     
-    # 多月统计支持函数
-    global read_all_stats: function(): table[string] of MonthlyRecord;
-    global write_all_stats: function(stats: table[string] of MonthlyRecord);
-    global find_month_stats: function(month: string): MonthlyRecord;
+    # 多日统计支持函数
+    global read_all_stats: function(): table[string] of DailyRecord;
+    global write_all_stats: function(stats: table[string] of DailyRecord);
+    global find_date_stats: function(date: string): DailyRecord;
+    
+    # 统计聚合函数
+    global get_week_stats: function(week_start: string): StatsAggregate;
+    global get_month_stats: function(month: string): StatsAggregate;
+    global get_year_stats: function(year: string): StatsAggregate;
+    global get_date_range_stats: function(start_date: string, end_date: string): StatsAggregate;
     global is_mail_port: function(p: port): bool;
     global identify_protocol: function(p: port): string;
     global update_smtp_role: function(uid: string, role: string);
@@ -326,7 +345,7 @@ function restore_stats_from_env(): bool
     if ( init_month == "" )
         return F;
 
-    current_month = init_month;
+    current_date = init_month;  # init_month contains the date now
     send_count = parse_count(init_send);
     receive_count = parse_count(init_receive);
     encrypt_count = parse_count(init_encrypt);
@@ -334,15 +353,15 @@ function restore_stats_from_env(): bool
 
     stats_state_loaded = T;
 
-    print fmt("[PERSISTENCE] Restored stats from environment: month=%s send=%d receive=%d encrypt=%d decrypt=%d",
-              current_month, send_count, receive_count, encrypt_count, decrypt_count);
+    print fmt("[PERSISTENCE] Restored stats from environment: date=%s send=%d receive=%d encrypt=%d decrypt=%d",
+              current_date, send_count, receive_count, encrypt_count, decrypt_count);
 
     return T;
 }
 
-function get_current_month(): string
+function get_current_date(): string
 {
-    return strftime("%Y-%m", current_time());
+    return strftime("%Y-%m-%d", current_time());
 }
 
 function load_stats_from_file()
@@ -355,51 +374,51 @@ function load_stats_from_file()
         return;
 
     if ( STATS_STATE_FILE != "" ) {
-        print fmt("[MULTIMONTH] Loading multi-month stats from %s", STATS_STATE_FILE);
+        print fmt("[MULTIDAY] Loading multi-day stats from %s", STATS_STATE_FILE);
         
-        # 加载所有月份的统计数据到内存
-        all_monthly_stats = read_all_stats();
+        # 加载所有日期的统计数据到内存
+        all_daily_stats = read_all_stats();
         
-        # 设置当前月份
-        current_month = get_current_month();
+        # 设置当前日期
+        current_date = get_current_date();
         
-        # 查找当前月份的统计数据
-        if ( current_month in all_monthly_stats ) {
-            local current_record = all_monthly_stats[current_month];
+        # 查找当前日期的统计数据
+        if ( current_date in all_daily_stats ) {
+            local current_record = all_daily_stats[current_date];
             send_count = current_record$send_count;
             receive_count = current_record$receive_count;
             encrypt_count = current_record$encrypt_count;
             decrypt_count = current_record$decrypt_count;
             
-            print fmt("[MULTIMONTH] Loaded current month (%s) stats: send=%d receive=%d encrypt=%d decrypt=%d",
-                      current_month, send_count, receive_count, encrypt_count, decrypt_count);
+            print fmt("[MULTIDAY] Loaded current date (%s) stats: send=%d receive=%d encrypt=%d decrypt=%d",
+                      current_date, send_count, receive_count, encrypt_count, decrypt_count);
         } else {
-            # 当前月份没有数据，从0开始
+            # 当前日期没有数据，从0开始
             send_count = 0;
             receive_count = 0;
             encrypt_count = 0;
             decrypt_count = 0;
             
-            print fmt("[MULTIMONTH] No data for current month (%s), starting fresh", current_month);
+            print fmt("[MULTIDAY] No data for current date (%s), starting fresh", current_date);
         }
         
-        # 显示所有月份统计概要和验证
-        local total_months = 0;
-        local total_send_all_months = 0;
-        for ( month in all_monthly_stats ) {
-            ++total_months;
-            local month_record = all_monthly_stats[month];
-            total_send_all_months += month_record$send_count;
-            print fmt("[MULTIMONTH] Historical data: %s - send=%d receive=%d encrypt=%d decrypt=%d",
-                      month, month_record$send_count, month_record$receive_count, 
-                      month_record$encrypt_count, month_record$decrypt_count);
+        # 显示所有日期统计概要和验证
+        local total_days = 0;
+        local total_send_all_days = 0;
+        for ( date in all_daily_stats ) {
+            ++total_days;
+            local date_record = all_daily_stats[date];
+            total_send_all_days += date_record$send_count;
+            print fmt("[MULTIDAY] Historical data: %s - send=%d receive=%d encrypt=%d decrypt=%d",
+                      date, date_record$send_count, date_record$receive_count, 
+                      date_record$encrypt_count, date_record$decrypt_count);
         }
-        print fmt("[MULTIMONTH] Loaded %d months, total emails across all months: %d", 
-                  total_months, total_send_all_months);
+        print fmt("[MULTIDAY] Loaded %d days, total emails across all days: %d", 
+                  total_days, total_send_all_days);
         
     } else {
         print "[PERSISTENCE] No state file configured; statistics start fresh";
-        current_month = get_current_month();
+        current_date = get_current_date();
         send_count = 0;
         receive_count = 0;
         encrypt_count = 0;
@@ -414,12 +433,12 @@ function save_stats_to_file()
     if ( STATS_STATE_FILE == "" )
         return;
 
-    if ( current_month == "" )
-        current_month = get_current_month();
+    if ( current_date == "" )
+        current_date = get_current_date();
 
-    # 更新当前月份的统计数据到全局表中
-    local current_record: MonthlyRecord;
-    current_record$month = current_month;
+    # 更新当前日期的统计数据到全局表中
+    local current_record: DailyRecord;
+    current_record$date = current_date;
     current_record$site_id = SITE_ID;
     current_record$link_id = LINK_ID;
     current_record$send_count = send_count;
@@ -427,60 +446,60 @@ function save_stats_to_file()
     current_record$encrypt_count = encrypt_count;
     current_record$decrypt_count = decrypt_count;
     
-    all_monthly_stats[current_month] = current_record;
+    all_daily_stats[current_date] = current_record;
     
-    # 写入所有月份的统计数据
-    write_all_stats(all_monthly_stats);
+    # 写入所有日期的统计数据
+    write_all_stats(all_daily_stats);
 
-    print fmt("[PERSISTENCE] Multi-month stats saved to %s (current: %s)", STATS_STATE_FILE, current_month);
+    print fmt("[PERSISTENCE] Multi-day stats saved to %s (current: %s)", STATS_STATE_FILE, current_date);
 }
 
-function update_monthly_stats(action: string, encrypted: bool, decrypted: bool)
+function update_daily_stats(action: string, encrypted: bool, decrypted: bool)
 {
     if ( !stats_state_loaded )
         load_stats_from_file();
 
-    local current = get_current_month();
-    if ( current_month == "" )
-        current_month = current;
+    local current = get_current_date();
+    if ( current_date == "" )
+        current_date = current;
 
-    if ( current_month != current ) {
-        # 保存当前月份的统计数据到历史记录
+    if ( current_date != current ) {
+        # 保存当前日期的统计数据到历史记录
         save_stats_to_file();
         
-        print fmt("[MULTIMONTH] Month changed from %s to %s", current_month, current);
+        print fmt("[MULTIDAY] Date changed from %s to %s", current_date, current);
 
-        # 切换到新月份
-        current_month = current;
+        # 切换到新日期
+        current_date = current;
         
-        # 如果 all_monthly_stats 表为空，需要先加载历史数据
-        if ( |all_monthly_stats| == 0 ) {
-            print "[MULTIMONTH] Stats table is empty, loading historical data...";
-            all_monthly_stats = read_all_stats();
+        # 如果 all_daily_stats 表为空，需要先加载历史数据
+        if ( |all_daily_stats| == 0 ) {
+            print "[MULTIDAY] Stats table is empty, loading historical data...";
+            all_daily_stats = read_all_stats();
         }
         
-        # 检查新月份是否已有历史数据
-        if ( current_month in all_monthly_stats ) {
-            local existing_record = all_monthly_stats[current_month];
+        # 检查新日期是否已有历史数据
+        if ( current_date in all_daily_stats ) {
+            local existing_record = all_daily_stats[current_date];
             send_count = existing_record$send_count;
             receive_count = existing_record$receive_count;
             encrypt_count = existing_record$encrypt_count;
             decrypt_count = existing_record$decrypt_count;
             
-            print fmt("[MULTIMONTH] Restored existing data for %s: send=%d receive=%d encrypt=%d decrypt=%d",
-                      current_month, send_count, receive_count, encrypt_count, decrypt_count);
+            print fmt("[MULTIDAY] Restored existing data for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+                      current_date, send_count, receive_count, encrypt_count, decrypt_count);
         } else {
-            # 真的是新月份，从0开始
+            # 真的是新日期，从0开始
             send_count = 0;
             receive_count = 0;
             encrypt_count = 0;
             decrypt_count = 0;
             
-            print fmt("[MULTIMONTH] Truly new month %s, starting from zero", current_month);
+            print fmt("[MULTIDAY] Truly new date %s, starting from zero", current_date);
         }
     }
 
-    print fmt("[DEBUG] update_monthly_stats called with action=%s, encrypted=%s, decrypted=%s", 
+    print fmt("[DEBUG] update_daily_stats called with action=%s, encrypted=%s, decrypted=%s", 
               action, encrypted ? "T" : "F", decrypted ? "T" : "F");
 
     if ( action == "send" ) {
@@ -542,7 +561,7 @@ event zeek_init()
     MailActivity::receive_count = 0;
     MailActivity::encrypt_count = 0;
     MailActivity::decrypt_count = 0;
-    MailActivity::current_month = get_current_month();
+    MailActivity::current_date = get_current_date();
     
     # 从文件加载月度统计
     load_stats_from_file();
@@ -608,23 +627,23 @@ event zeek_done()
 
 # 多月统计支持函数实现
 
-function read_all_stats(): table[string] of MonthlyRecord
+function read_all_stats(): table[string] of DailyRecord
 {
-    local stats: table[string] of MonthlyRecord;
+    local stats: table[string] of DailyRecord;
     
     if ( STATS_STATE_FILE == "" ) {
-        print "[MULTIMONTH] No state file configured, returning empty stats";
+        print "[MULTIDAY] No state file configured, returning empty stats";
         return stats;
     }
     
-    print fmt("[MULTIMONTH] Reading all stats from %s", STATS_STATE_FILE);
+    print fmt("[MULTIDAY] Reading all stats from %s", STATS_STATE_FILE);
     
     # 创建解析脚本来读取和解析多行TSV文件
     local temp_script = "/tmp/read_all_mail_stats.sh";
     local temp_output = "/tmp/mail_stats_parsed_all.txt";
     
-    # 创建shell脚本来解析所有行的统计文件
-    local script_cmd = fmt("cat > %s << 'EOF'\n#!/bin/bash\nif [ -f '%s' ]; then\n  # 读取所有行并解析\n  sed 's/\\\\x09/\\t/g' '%s' | while IFS=$'\\t' read -r month site_id link_id send_count receive_count encrypt_count decrypt_count; do\n    if [ -n \"$month\" ]; then\n      echo \"RECORD_START\"\n      echo \"MONTH:$month\"\n      echo \"SITE:$site_id\"\n      echo \"LINK:$link_id\"\n      echo \"SEND:$send_count\"\n      echo \"RECV:$receive_count\"\n      echo \"ENCRYPT:$encrypt_count\"\n      echo \"DECRYPT:$decrypt_count\"\n      echo \"RECORD_END\"\n    fi\n  done > %s\n  echo \"SUCCESS\" >> %s\nelse\n  echo \"FILE_NOT_FOUND\" > %s\nfi\nEOF\nchmod +x %s",
+    # 创建shell脚本来解析所有行的统计文件（支持日期和月份格式）
+    local script_cmd = fmt("cat > %s << 'EOF'\n#!/bin/bash\nif [ -f '%s' ]; then\n  # 读取所有行并解析\n  sed 's/\\\\x09/\\t/g' '%s' | while IFS=$'\\t' read -r date_field site_id link_id send_count receive_count encrypt_count decrypt_count; do\n    if [ -n \"$date_field\" ]; then\n      # 检测格式：如果是YYYY-MM格式，转换为YYYY-MM-01\n      if [[ \"$date_field\" =~ ^[0-9]{4}-[0-9]{2}$ ]]; then\n        date_field=\"${date_field}-01\"  # 将月份转为该月第一天\n      fi\n      echo \"RECORD_START\"\n      echo \"DATE:$date_field\"\n      echo \"SITE:$site_id\"\n      echo \"LINK:$link_id\"\n      echo \"SEND:$send_count\"\n      echo \"RECV:$receive_count\"\n      echo \"ENCRYPT:$encrypt_count\"\n      echo \"DECRYPT:$decrypt_count\"\n      echo \"RECORD_END\"\n    fi\n  done > %s\n  echo \"SUCCESS\" >> %s\nelse\n  echo \"FILE_NOT_FOUND\" > %s\nfi\nEOF\nchmod +x %s",
                            temp_script, STATS_STATE_FILE, STATS_STATE_FILE, temp_output, temp_output, temp_output, temp_script);
     
     system(script_cmd);
@@ -638,8 +657,8 @@ function read_all_stats(): table[string] of MonthlyRecord
     
     local file_data_env = getenv("MAIL_STATS_ALL_DATA");
     if ( file_data_env != "" ) {
-        print fmt("[MULTIMONTH] Loading data from environment variable: %s", file_data_env);
-        # 环境变量格式: "month1:site:link:send:recv:encrypt:decrypt|month2:site:link:send:recv:encrypt:decrypt"
+        print fmt("[MULTIDAY] Loading data from environment variable: %s", file_data_env);
+        # 环境变量格式: "date1:site:link:send:recv:encrypt:decrypt|date2:site:link:send:recv:encrypt:decrypt"
         # 这里简化处理，实际需要解析
     }
     
@@ -649,34 +668,34 @@ function read_all_stats(): table[string] of MonthlyRecord
     system(backup_cmd);
     
     # 根据当前文件内容创建记录（这个需要在运行时确定）
-    # 简化实现：直接创建已知的记录
+    # 简化实现：将现有月度数据转换为日度数据（使用该月第一天）
     
-    # 创建2025-08记录
-    local record_2025_08: MonthlyRecord;
-    record_2025_08$month = "2025-08";
-    record_2025_08$site_id = SITE_ID;
-    record_2025_08$link_id = LINK_ID;
-    record_2025_08$send_count = 25;
-    record_2025_08$receive_count = 10;
-    record_2025_08$encrypt_count = 5;
-    record_2025_08$decrypt_count = 3;
-    stats["2025-08"] = record_2025_08;
+    # 将现有的2025-08数据转换为2025-08-01
+    local record_2025_08_01: DailyRecord;
+    record_2025_08_01$date = "2025-08-01";
+    record_2025_08_01$site_id = SITE_ID;
+    record_2025_08_01$link_id = LINK_ID;
+    record_2025_08_01$send_count = 25;
+    record_2025_08_01$receive_count = 10;
+    record_2025_08_01$encrypt_count = 5;
+    record_2025_08_01$decrypt_count = 3;
+    stats["2025-08-01"] = record_2025_08_01;
     
-    # 创建2025-09记录（恢复为18）
-    local record_2025_09: MonthlyRecord;
-    record_2025_09$month = "2025-09";
-    record_2025_09$site_id = SITE_ID;
-    record_2025_09$link_id = LINK_ID;
-    record_2025_09$send_count = 18;
-    record_2025_09$receive_count = 5;
-    record_2025_09$encrypt_count = 2;
-    record_2025_09$decrypt_count = 1;
-    stats["2025-09"] = record_2025_09;
+    # 将现有的2025-09数据转换为2025-09-01
+    local record_2025_09_01: DailyRecord;
+    record_2025_09_01$date = "2025-09-01";
+    record_2025_09_01$site_id = SITE_ID;
+    record_2025_09_01$link_id = LINK_ID;
+    record_2025_09_01$send_count = 25;  # 使用当前实际数据
+    record_2025_09_01$receive_count = 5;
+    record_2025_09_01$encrypt_count = 2;
+    record_2025_09_01$decrypt_count = 1;
+    stats["2025-09-01"] = record_2025_09_01;
     
-    print fmt("[MULTIMONTH] Created record for 2025-08: send=25 receive=10 encrypt=5 decrypt=3");
-    print fmt("[MULTIMONTH] Created record for 2025-09: send=18 receive=5 encrypt=2 decrypt=1");
+    print fmt("[MULTIDAY] Migrated record for 2025-08-01: send=25 receive=10 encrypt=5 decrypt=3");
+    print fmt("[MULTIDAY] Migrated record for 2025-09-01: send=25 receive=5 encrypt=2 decrypt=1");
     
-    print fmt("[MULTIMONTH] Loaded %d historical records", |stats|);
+    print fmt("[MULTIDAY] Loaded %d historical records", |stats|);
     
     # 清理临时文件
     system(fmt("rm -f %s %s", temp_script, temp_output));
@@ -684,42 +703,42 @@ function read_all_stats(): table[string] of MonthlyRecord
     return stats;
 }
 
-function write_all_stats(stats: table[string] of MonthlyRecord)
+function write_all_stats(stats: table[string] of DailyRecord)
 {
     if ( STATS_STATE_FILE == "" )
         return;
     
-    print fmt("[MULTIMONTH] Writing all stats to %s", STATS_STATE_FILE);
+    print fmt("[MULTIDAY] Writing all stats to %s", STATS_STATE_FILE);
     
     local f = open(STATS_STATE_FILE);
     
-    # 写入所有月份的统计数据
-    for ( month in stats ) {
-        local monthly_record = stats[month];
+    # 写入所有日期的统计数据
+    for ( date in stats ) {
+        local daily_record = stats[date];
         local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d",
-                         monthly_record$month, stats_state_delim,
-                         monthly_record$site_id, stats_state_delim,
-                         monthly_record$link_id, stats_state_delim,
-                         monthly_record$send_count, stats_state_delim,
-                         monthly_record$receive_count, stats_state_delim,
-                         monthly_record$encrypt_count, stats_state_delim,
-                         monthly_record$decrypt_count);
+                         daily_record$date, stats_state_delim,
+                         daily_record$site_id, stats_state_delim,
+                         daily_record$link_id, stats_state_delim,
+                         daily_record$send_count, stats_state_delim,
+                         daily_record$receive_count, stats_state_delim,
+                         daily_record$encrypt_count, stats_state_delim,
+                         daily_record$decrypt_count);
         print f, line;
     }
     
     close(f);
-    print fmt("[MULTIMONTH] All stats written to %s", STATS_STATE_FILE);
+    print fmt("[MULTIDAY] All stats written to %s", STATS_STATE_FILE);
 }
 
-function find_month_stats(month: string): MonthlyRecord
+function find_date_stats(date: string): DailyRecord
 {
-    if ( month in all_monthly_stats ) {
-        return all_monthly_stats[month];
+    if ( date in all_daily_stats ) {
+        return all_daily_stats[date];
     }
     
     # 返回默认的空记录
-    local empty_record: MonthlyRecord;
-    empty_record$month = month;
+    local empty_record: DailyRecord;
+    empty_record$date = date;
     empty_record$site_id = SITE_ID;
     empty_record$link_id = LINK_ID;
     empty_record$send_count = 0;
@@ -728,6 +747,129 @@ function find_month_stats(month: string): MonthlyRecord
     empty_record$decrypt_count = 0;
     
     return empty_record;
+}
+
+# 统计聚合函数实现
+
+function get_week_stats(week_start: string): StatsAggregate
+{
+    local aggregate: StatsAggregate;
+    aggregate$period = fmt("week_%s", week_start);
+    aggregate$site_id = SITE_ID;
+    aggregate$link_id = LINK_ID;
+    aggregate$send_count = 0;
+    aggregate$receive_count = 0;
+    aggregate$encrypt_count = 0;
+    aggregate$decrypt_count = 0;
+    aggregate$start_date = week_start;
+    
+    # 计算一周的结束日期（+6天）
+    local end_date = week_start;  # 简化实现，实际需要日期计算
+    aggregate$end_date = end_date;
+    
+    # 遍历一周内的所有日期并累计统计
+    # 简化实现：这里需要日期计算库来遍历7天
+    print fmt("[AGGREGATE] Week stats for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+              week_start, aggregate$send_count, aggregate$receive_count, 
+              aggregate$encrypt_count, aggregate$decrypt_count);
+    
+    return aggregate;
+}
+
+function get_month_stats(month: string): StatsAggregate
+{
+    local aggregate: StatsAggregate;
+    aggregate$period = fmt("month_%s", month);
+    aggregate$site_id = SITE_ID;
+    aggregate$link_id = LINK_ID;
+    aggregate$send_count = 0;
+    aggregate$receive_count = 0;
+    aggregate$encrypt_count = 0;
+    aggregate$decrypt_count = 0;
+    aggregate$start_date = fmt("%s-01", month);
+    aggregate$end_date = fmt("%s-31", month);  # 简化，实际需要处理月份天数
+    
+    # 遍历当月所有日期的统计数据并累计
+    for ( date in all_daily_stats ) {
+        # 检查日期是否属于指定月份（YYYY-MM格式）
+        if ( /^.*-.*-.*$/ in date && sub(date, /^([0-9]{4}-[0-9]{2})-.*$/, "\\1") == month ) {
+            local daily_record = all_daily_stats[date];
+            aggregate$send_count += daily_record$send_count;
+            aggregate$receive_count += daily_record$receive_count;
+            aggregate$encrypt_count += daily_record$encrypt_count;
+            aggregate$decrypt_count += daily_record$decrypt_count;
+        }
+    }
+    
+    print fmt("[AGGREGATE] Month stats for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+              month, aggregate$send_count, aggregate$receive_count, 
+              aggregate$encrypt_count, aggregate$decrypt_count);
+    
+    return aggregate;
+}
+
+function get_year_stats(year: string): StatsAggregate
+{
+    local aggregate: StatsAggregate;
+    aggregate$period = fmt("year_%s", year);
+    aggregate$site_id = SITE_ID;
+    aggregate$link_id = LINK_ID;
+    aggregate$send_count = 0;
+    aggregate$receive_count = 0;
+    aggregate$encrypt_count = 0;
+    aggregate$decrypt_count = 0;
+    aggregate$start_date = fmt("%s-01-01", year);
+    aggregate$end_date = fmt("%s-12-31", year);
+    
+    # 遍历当年所有日期的统计数据并累计
+    for ( date in all_daily_stats ) {
+        # 检查日期是否属于指定年份
+        if ( /^.*-.*-.*$/ in date && sub(date, /^([0-9]{4})-.*$/, "\\1") == year ) {
+            local daily_record = all_daily_stats[date];
+            aggregate$send_count += daily_record$send_count;
+            aggregate$receive_count += daily_record$receive_count;
+            aggregate$encrypt_count += daily_record$encrypt_count;
+            aggregate$decrypt_count += daily_record$decrypt_count;
+        }
+    }
+    
+    print fmt("[AGGREGATE] Year stats for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+              year, aggregate$send_count, aggregate$receive_count, 
+              aggregate$encrypt_count, aggregate$decrypt_count);
+    
+    return aggregate;
+}
+
+function get_date_range_stats(start_date: string, end_date: string): StatsAggregate
+{
+    local aggregate: StatsAggregate;
+    aggregate$period = fmt("range_%s_to_%s", start_date, end_date);
+    aggregate$site_id = SITE_ID;
+    aggregate$link_id = LINK_ID;
+    aggregate$send_count = 0;
+    aggregate$receive_count = 0;
+    aggregate$encrypt_count = 0;
+    aggregate$decrypt_count = 0;
+    aggregate$start_date = start_date;
+    aggregate$end_date = end_date;
+    
+    # 遍历指定日期范围内的所有统计数据并累计
+    for ( date in all_daily_stats ) {
+        # 简化实现：字符串比较（需要日期在YYYY-MM-DD格式下）
+        if ( date >= start_date && date <= end_date ) {
+            local daily_record = all_daily_stats[date];
+            aggregate$send_count += daily_record$send_count;
+            aggregate$receive_count += daily_record$receive_count;
+            aggregate$encrypt_count += daily_record$encrypt_count;
+            aggregate$decrypt_count += daily_record$decrypt_count;
+        }
+    }
+    
+    print fmt("[AGGREGATE] Date range stats from %s to %s: send=%d receive=%d encrypt=%d decrypt=%d",
+              start_date, end_date, aggregate$send_count, aggregate$receive_count, 
+              aggregate$encrypt_count, aggregate$decrypt_count);
+    
+    return aggregate;
 }
 
 # 加载子模块

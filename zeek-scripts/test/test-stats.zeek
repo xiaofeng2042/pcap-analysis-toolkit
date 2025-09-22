@@ -30,12 +30,12 @@ function test_stats_initialization()
     test_check(MailActivity::encrypt_count >= 0, "encrypt_count initialized");
     test_check(MailActivity::decrypt_count >= 0, "decrypt_count initialized");
     
-    # 检查月份是否设置
-    local current_month = MailActivity::get_current_month();
-    test_check(current_month != "", "current month is set");
-    test_check(|current_month| == 7, "month format YYYY-MM");
+    # 检查日期是否设置
+    local current_date = MailActivity::get_current_date();
+    test_check(current_date != "", "current date is set");
+    test_check(|current_date| == 10, "date format YYYY-MM-DD");
     
-    print fmt("Current month: %s", current_month);
+    print fmt("Current date: %s", current_date);
     print fmt("Initial stats: send=%d, receive=%d, encrypt=%d, decrypt=%d",
               MailActivity::send_count, MailActivity::receive_count,
               MailActivity::encrypt_count, MailActivity::decrypt_count);
@@ -53,15 +53,15 @@ function test_stats_update()
     local initial_decrypt = MailActivity::decrypt_count;
     
     # 测试发送统计
-    MailActivity::update_monthly_stats("send", F, F);
+    MailActivity::update_daily_stats("send", F, F);
     test_check(MailActivity::send_count == initial_send + 1, "send count incremented");
     
     # 测试接收统计
-    MailActivity::update_monthly_stats("receive", F, F);
+    MailActivity::update_daily_stats("receive", F, F);
     test_check(MailActivity::receive_count == initial_receive + 1, "receive count incremented");
     
     # 测试加密统计
-    MailActivity::update_monthly_stats("send", T, F);
+    MailActivity::update_daily_stats("send", T, F);
     test_check(MailActivity::send_count == initial_send + 2, "send count incremented again");
     test_check(MailActivity::encrypt_count == initial_encrypt + 1, "encrypt count incremented");
     
@@ -87,7 +87,7 @@ function test_env_restore()
     
     # 如果有环境变量设置，验证是否正确恢复
     if ( init_month != "" && init_send != "" ) {
-        test_check(MailActivity::current_month == init_month, "month restored from env");
+        test_check(MailActivity::current_date == init_month, "date restored from env");
         test_check(MailActivity::send_count >= MailActivity::parse_count(init_send), "send count restored from env");
     } else {
         print "No environment variables set - testing fresh start behavior";

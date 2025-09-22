@@ -20,17 +20,17 @@ event zeek_init()
     print fmt("  接收计数: %d", MailActivity::receive_count);
     print fmt("  加密计数: %d", MailActivity::encrypt_count);
     print fmt("  解密计数: %d", MailActivity::decrypt_count);
-    print fmt("  当前月份: %s", MailActivity::current_month);
+    print fmt("  当前日期: %s", MailActivity::current_date);
     print "";
     
     # 测试统计更新
     print "测试统计更新:";
-    print "  执行 update_monthly_stats(\"send\", F, F)";
-    MailActivity::update_monthly_stats("send", F, F);
+    print "  执行 update_daily_stats(\"send\", F, F)";
+    MailActivity::update_daily_stats("send", F, F);
     print fmt("  更新后发送计数: %d", MailActivity::send_count);
     
-    print "  执行 update_monthly_stats(\"receive\", T, F)";
-    MailActivity::update_monthly_stats("receive", T, F);
+    print "  执行 update_daily_stats(\"receive\", T, F)";
+    MailActivity::update_daily_stats("receive", T, F);
     print fmt("  更新后接收计数: %d", MailActivity::receive_count);
     print fmt("  更新后加密计数: %d", MailActivity::encrypt_count);
     print "";

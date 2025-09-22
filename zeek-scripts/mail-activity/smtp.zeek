@@ -168,8 +168,8 @@ event smtp_reply(c: connection, is_orig: bool, code: count, cmd: string, msg: st
                 connection_tracks[c$uid]$link_encrypted = T;
                 info$link_encrypted = T;
                 
-                # 更新月度统计
-                update_monthly_stats(info$action, T, F);
+                # 更新日度统计
+                update_daily_stats(info$action, T, F);
             }
             
             Log::write(TLS_LOG, tls_success_info);
@@ -319,7 +319,7 @@ function generate_mail_flow_record(c: connection, info: Info)
     print fmt("[DEBUG] SMTP connection %s:%d -> %s:%d, action_type=%s, direction_raw=%s", 
               c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, action_type, flow_info$direction_raw);
     
-    update_monthly_stats(action_type, 
+    update_daily_stats(action_type, 
                         flow_info$link_encrypted ? flow_info$link_encrypted : F,
                         flow_info$link_decrypted ? flow_info$link_decrypted : F);
     
