@@ -58,6 +58,72 @@ get_default_gateway() {
     echo "$gateway"
 }
 
+# 检查VPN进程是否运行
+check_vpn_processes() {
+    local vpnbridge_running=false
+    local vpnserver_running=false
+    
+    # 检查vpnbridge进程
+    if pgrep -f "vpnbridge" >/dev/null 2>&1; then
+        vpnbridge_running=true
+        log_info "检测到vpnbridge进程正在运行"
+    fi
+    
+    # 检查vpnserver进程
+    if pgrep -f "vpnserver" >/dev/null 2>&1; then
+        vpnserver_running=true
+        log_info "检测到vpnserver进程正在运行"
+    fi
+    
+    # 返回检测结果（通过全局变量）
+    VPN_BRIDGE_RUNNING=$vpnbridge_running
+    VPN_SERVER_RUNNING=$vpnserver_running
+}
+
+# 配置VPN相关的桥接IP
+configure_vpn_bridge_ip() {
+    local bridge_interface="br0"
+    
+    # 检查VPN进程
+    check_vpn_processes
+    
+    # 根据VPN进程配置相应的IP
+    if [[ "$VPN_BRIDGE_RUNNING" == true ]]; then
+        log_info "为vpnbridge配置桥接IP: br0:0 1.1.0.100/24"
+        ifconfig "${bridge_interface}:0" 1.1.0.100/24 2>/dev/null || {
+            log_warn "使用ifconfig配置失败，尝试使用ip命令"
+            ip addr add 1.1.0.100/24 dev "$bridge_interface" label "${bridge_interface}:0" 2>/dev/null || {
+                log_error "配置vpnbridge IP失败"
+                return 1
+            }
+        }
+        log_info "vpnbridge IP配置成功: 1.1.0.100/24"
+    fi
+    
+    if [[ "$VPN_SERVER_RUNNING" == true ]]; then
+        log_info "为vpnserver配置桥接IP: br0:0 1.1.0.2/24"
+        ifconfig "${bridge_interface}:0" 1.1.0.2/24 2>/dev/null || {
+            log_warn "使用ifconfig配置失败，尝试使用ip命令"
+            ip addr add 1.1.0.2/24 dev "$bridge_interface" label "${bridge_interface}:0" 2>/dev/null || {
+                log_error "配置vpnserver IP失败"
+                return 1
+            }
+        }
+        log_info "vpnserver IP配置成功: 1.1.0.2/24"
+    fi
+    
+    # 如果两个进程都在运行，给出警告
+    if [[ "$VPN_BRIDGE_RUNNING" == true && "$VPN_SERVER_RUNNING" == true ]]; then
+        log_warn "检测到vpnbridge和vpnserver同时运行，可能存在IP冲突"
+        log_warn "vpnserver配置将覆盖vpnbridge配置"
+    fi
+    
+    # 如果没有检测到VPN进程
+    if [[ "$VPN_BRIDGE_RUNNING" == false && "$VPN_SERVER_RUNNING" == false ]]; then
+        log_info "未检测到VPN进程，跳过VPN桥接IP配置"
+    fi
+}
+
 # 备份当前网络配置
 backup_config() {
     log_info "备份当前网络配置..."
@@ -146,7 +212,11 @@ setup_bridge() {
         ip route add default via "$gateway" dev "$bridge_interface"
     fi
     
-    # 8. 显示配置结果
+    # 8. 配置VPN相关的桥接IP（如果有VPN进程运行）
+    log_info "检查VPN进程并配置相应的桥接IP..."
+    configure_vpn_bridge_ip
+    
+    # 9. 显示配置结果
     log_info "桥接设置完成！"
     echo
     echo "=== 当前网络配置 ==="
@@ -185,6 +255,9 @@ show_usage() {
     echo "  - 创建br0桥接接口"
     echo "  - 将eth0和tap_tap加入桥接"
     echo "  - 将IP配置迁移到br0"
+    echo "  - 自动检测VPN进程并配置相应的桥接IP："
+    echo "    * vpnbridge进程 -> br0:0 配置为 1.1.0.100/24"
+    echo "    * vpnserver进程 -> br0:0 配置为 1.1.0.2/24"
     echo
     echo "注意:"
     echo "  - 需要root权限运行"
@@ -207,11 +280,14 @@ dry_run() {
     echo "6. 启动所有接口"
     echo "7. 将IP地址 $eth_ip 设置到 br0"
     echo "8. 设置默认路由到网关 $gateway"
+    echo "9. 检测VPN进程并配置相应的桥接IP"
     echo
     echo "当前检测到的配置："
     echo "  eth0 IP: $eth_ip"
     echo "  网关: $gateway"
     echo "  tap_tap存在: $(check_interface tap_tap && echo "是" || echo "否")"
+    echo "  VPN进程状态:"
+    check_vpn_processes
 }
 
 # 主程序
