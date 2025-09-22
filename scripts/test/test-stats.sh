@@ -170,20 +170,39 @@ run_full_test() {
     
     # 如果统计文件存在，预读取其内容并通过环境变量传递给Zeek
     if [ -f "$STATS_FILE" ]; then
-        local stats_line=$(tail -n 1 "$STATS_FILE" | sed 's/\\x09/\t/g')
-        local month=$(echo "$stats_line" | cut -f1)
-        local send_count=$(echo "$stats_line" | cut -f4)
-        local receive_count=$(echo "$stats_line" | cut -f5)
-        local encrypt_count=$(echo "$stats_line" | cut -f6)
-        local decrypt_count=$(echo "$stats_line" | cut -f7)
+        # 获取当前月份（YYYY-MM格式）
+        local current_month=$(date "+%Y-%m")
         
-        export MAIL_STATS_INIT_MONTH="$month"
-        export MAIL_STATS_INIT_SEND="$send_count"
-        export MAIL_STATS_INIT_RECEIVE="$receive_count"
-        export MAIL_STATS_INIT_ENCRYPT="$encrypt_count"
-        export MAIL_STATS_INIT_DECRYPT="$decrypt_count"
+        # 查找当前月份的数据行，如果没找到则使用最新月份的数据
+        local stats_line=$(sed 's/\\x09/\t/g' "$STATS_FILE" | grep "^$current_month" | head -n 1)
         
-        echo "预加载统计数据: month=$month send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
+        # 如果当前月份没有数据，查找最新的月份数据（按时间倒序）
+        if [ -z "$stats_line" ]; then
+            echo "当前月份 $current_month 没有数据，使用最新月份数据"
+            stats_line=$(sed 's/\\x09/\t/g' "$STATS_FILE" | sort -t$'\t' -k1,1r | head -n 1)
+        fi
+        
+        if [ -n "$stats_line" ]; then
+            local month=$(echo "$stats_line" | cut -f1)
+            local send_count=$(echo "$stats_line" | cut -f4)
+            local receive_count=$(echo "$stats_line" | cut -f5)
+            local encrypt_count=$(echo "$stats_line" | cut -f6)
+            local decrypt_count=$(echo "$stats_line" | cut -f7)
+            
+            export MAIL_STATS_INIT_MONTH="$month"
+            export MAIL_STATS_INIT_SEND="$send_count"
+            export MAIL_STATS_INIT_RECEIVE="$receive_count"
+            export MAIL_STATS_INIT_ENCRYPT="$encrypt_count"
+            export MAIL_STATS_INIT_DECRYPT="$decrypt_count"
+            
+            if [ "$month" = "$current_month" ]; then
+                echo "预加载统计数据（当前月份）: month=$month send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
+            else
+                echo "预加载统计数据（使用 $month 数据，当前月份 $current_month 无数据）: send=$send_count receive=$receive_count encrypt=$encrypt_count decrypt=$decrypt_count"
+            fi
+        else
+            echo "统计文件为空或格式错误"
+        fi
     fi
     
     cd "$PROJECT_DIR"
