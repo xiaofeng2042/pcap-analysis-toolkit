@@ -355,16 +355,16 @@ function save_stats_to_file()
 
     local f = open(STATS_STATE_FILE);
 
-    local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d%s",
+    local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d",
                      current_month, stats_state_delim,
                      SITE_ID, stats_state_delim,
                      LINK_ID, stats_state_delim,
                      send_count, stats_state_delim,
                      receive_count, stats_state_delim,
                      encrypt_count, stats_state_delim,
-                     decrypt_count, "\n");
+                     decrypt_count);
 
-    write_file(f, line);
+    print f, line;
     close(f);
 
     print fmt("[PERSISTENCE] Stats snapshot saved to %s", STATS_STATE_FILE);

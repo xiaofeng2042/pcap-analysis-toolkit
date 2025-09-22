@@ -81,3 +81,4 @@ Mail protocol ports are defined in const sets (SMTP_PORTS, POP3_PORTS, IMAP_PORT
 - Never commit sensitive pcaps — sanitize traces before sharing
 - Generated logs in output/ are git-ignored to prevent accidental commits
 - Use BPF filters to limit capture scope and reduce noise
+- 验证seek文件语法要用 zeek -C
