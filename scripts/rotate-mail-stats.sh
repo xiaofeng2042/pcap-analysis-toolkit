@@ -2,6 +2,12 @@
 # rotate-mail-stats.sh - Main rotation script for mail statistics
 # Supports monthly, retention-based, and size-based rotation triggers
 
+# Ensure we're running with bash for compatibility
+if [ -z "$BASH_VERSION" ]; then
+    echo "This script requires bash for proper functionality. Restarting with bash..."
+    exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 # Get script directory

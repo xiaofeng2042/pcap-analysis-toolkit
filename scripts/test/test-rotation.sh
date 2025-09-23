@@ -1,6 +1,12 @@
 #!/bin/bash
 # test-rotation.sh - Test rotation functionality
 
+# Ensure we're running with bash for compatibility
+if [ -z "$BASH_VERSION" ]; then
+    echo "This script requires bash. Restarting with bash..."
+    exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 # Colors for output
