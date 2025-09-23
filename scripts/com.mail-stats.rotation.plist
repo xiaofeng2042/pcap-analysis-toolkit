@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mail-stats.rotation</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/fxf/Desktop/123/scripts/cron-daily-rotation.sh</string>
+    </array>
+    
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>0</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/fxf/Desktop/123/output/state/rotation.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/fxf/Desktop/123/output/state/rotation.log</string>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/fxf/Desktop/123</string>
+    
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

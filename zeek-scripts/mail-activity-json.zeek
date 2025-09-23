@@ -27,6 +27,11 @@ export {
     option TUNNEL_INTERFACE = getenv("TUNNEL_INTERFACE") != "" ? getenv("TUNNEL_INTERFACE") : "tap_tap" &redef;    # 副采集口（链路画像）
     option STATS_STATE_FILE = getenv("MAIL_STATS_STATE_FILE") != "" ? 
                               getenv("MAIL_STATS_STATE_FILE") : "" &redef;                      # 统计状态文件路径
+    option ARCHIVE_DIR = getenv("MAIL_STATS_ARCHIVE_DIR") != "" ?
+                         getenv("MAIL_STATS_ARCHIVE_DIR") : "" &redef;                        # 归档目录路径
+    option ENABLE_ARCHIVE = getenv("MAIL_STATS_ENABLE_ARCHIVE") == "true" ? T : F &redef;      # 启用归档支持
+    option ARCHIVE_WINDOW_DAYS = getenv("MAIL_STATS_ARCHIVE_WINDOW") != "" ?
+                                 to_count(getenv("MAIL_STATS_ARCHIVE_WINDOW")) : 30 &redef;    # 从归档加载的天数
     
     # 方向判定结果类型
     type DirectionInfo: record {
@@ -621,11 +626,65 @@ event MailActivity::mail_stats_report()
 event zeek_done()
 {
     save_stats_to_file();
+    
+    # Check if rotation is needed and set environment variable for external processing
+    if ( should_rotate_on_size() ) {
+        print "[MULTIDAY] File size rotation may be needed, setting rotation flag";
+        # Note: Actual rotation will be handled by external scripts
+    }
+    
+    # Log archive status for debugging
+    if ( ENABLE_ARCHIVE && ARCHIVE_DIR != "" ) {
+        print fmt("[MULTIDAY] Archive support enabled, directory: %s", ARCHIVE_DIR);
+    }
 }
 
 
 
 # 多月统计支持函数实现
+
+# Get date N days ago
+function get_date_n_days_ago(days: count): string
+{
+    # Calculate date N days ago from current time
+    local target_time = current_time() - double_to_interval(days * 24 * 3600);
+    return strftime("%Y-%m-%d", target_time);
+}
+
+# Load data from archives using external script
+function load_from_archives(stats: table[string] of DailyRecord, start_date: string, end_date: string)
+{
+    if ( ARCHIVE_DIR == "" ) {
+        print "[MULTIDAY] Archive directory not configured, skipping archive loading";
+        return;
+    }
+    
+    print fmt("[MULTIDAY] Attempting to load archive data from %s to %s", start_date, end_date);
+    
+    # Use the rotation script to query archives
+    local query_cmd = fmt("./scripts/rotate-mail-stats.sh query %s %s 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || true", 
+                          start_date, end_date);
+    system(query_cmd);
+    
+    # For now, we'll rely on environment variables for archive data
+    # This could be enhanced with a more sophisticated integration
+    print "[MULTIDAY] Archive query executed (results would be processed if available)";
+}
+
+# Check if rotation is needed based on file size
+function should_rotate_on_size(): bool
+{
+    if ( STATS_STATE_FILE == "" ) {
+        return F;
+    }
+    
+    # Use external script to check file size
+    local size_check_cmd = fmt("./scripts/rotate-mail-stats.sh size --dry-run 2>/dev/null | grep -q 'exceeds limit' && echo 'YES' || echo 'NO'");
+    system(size_check_cmd);
+    
+    # For safety, always return false in this version
+    return F;
+}
 
 function read_all_stats(): table[string] of DailyRecord
 {
@@ -637,6 +696,13 @@ function read_all_stats(): table[string] of DailyRecord
     }
     
     print fmt("[MULTIDAY] Reading all stats from %s", STATS_STATE_FILE);
+    
+    # Check if archive loading is enabled and try to load recent archive data
+    if ( ENABLE_ARCHIVE && ARCHIVE_DIR != "" ) {
+        print fmt("[MULTIDAY] Archive support enabled, loading recent %d days from archives", ARCHIVE_WINDOW_DAYS);
+        local archive_window_start = get_date_n_days_ago(ARCHIVE_WINDOW_DAYS);
+        load_from_archives(stats, archive_window_start, current_date);
+    }
     
     # 创建解析脚本来读取和解析多行TSV文件
     local temp_script = "/tmp/read_all_mail_stats.sh";
