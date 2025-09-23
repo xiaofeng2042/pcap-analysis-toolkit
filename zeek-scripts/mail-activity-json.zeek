@@ -17,6 +17,10 @@
 # JSON日志配置
 redef LogAscii::use_json = T;
 
+# Zeek内置日志轮转配置
+redef Log::default_rotation_interval = 3600secs;   # 每小时轮转一次
+redef Log::default_rotation_postprocessor_cmd = "echo 'Log rotated: %s' >&2";  # 轮转后处理命令
+
 module MailActivity;
 
 export {
