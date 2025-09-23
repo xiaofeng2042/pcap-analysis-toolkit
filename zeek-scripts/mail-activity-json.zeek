@@ -623,6 +623,22 @@ event MailActivity::mail_stats_report()
 }
 
 
+# Check if rotation is needed based on file size
+function should_rotate_on_size(): bool
+{
+    if ( STATS_STATE_FILE == "" ) {
+        return F;
+    }
+    
+    # Use external script to check file size
+    local size_check_cmd = fmt("./scripts/rotate-mail-stats.sh size --dry-run 2>/dev/null | grep -q 'exceeds limit' && echo 'YES' || echo 'NO'");
+    system(size_check_cmd);
+    
+    # For safety, always return false in this version
+    return F;
+}
+
+
 event zeek_done()
 {
     save_stats_to_file();
@@ -669,21 +685,6 @@ function load_from_archives(stats: table[string] of DailyRecord, start_date: str
     # For now, we'll rely on environment variables for archive data
     # This could be enhanced with a more sophisticated integration
     print "[MULTIDAY] Archive query executed (results would be processed if available)";
-}
-
-# Check if rotation is needed based on file size
-function should_rotate_on_size(): bool
-{
-    if ( STATS_STATE_FILE == "" ) {
-        return F;
-    }
-    
-    # Use external script to check file size
-    local size_check_cmd = fmt("./scripts/rotate-mail-stats.sh size --dry-run 2>/dev/null | grep -q 'exceeds limit' && echo 'YES' || echo 'NO'");
-    system(size_check_cmd);
-    
-    # For safety, always return false in this version
-    return F;
 }
 
 function read_all_stats(): table[string] of DailyRecord
