@@ -203,6 +203,22 @@ run_full_test() {
         else
             echo "统计文件为空或格式错误"
         fi
+        
+        # 新增：为所有行设置环境变量，供Zeek的read_all_stats()函数使用
+        echo "设置所有历史统计数据的环境变量..."
+        while IFS=$'\t' read -r date_field site_id link_id send_count receive_count encrypt_count decrypt_count; do
+            if [ -n "$date_field" ] && [ "$site_id" = "overseas" ] && [ "$link_id" = "test_link" ]; then
+                # 如果是YYYY-MM格式，转换为YYYY-MM-01
+                if [[ "$date_field" =~ ^[0-9]{4}-[0-9]{2}$ ]]; then
+                    date_field="${date_field}-01"
+                fi
+                # 创建环境变量名（将-替换为_）
+                local env_var_name="MAIL_STATS_ROW_${date_field//-/_}"
+                local env_var_value="$date_field,$site_id,$link_id,$send_count,$receive_count,$encrypt_count,$decrypt_count"
+                export "$env_var_name"="$env_var_value"
+                echo "设置环境变量: $env_var_name=$env_var_value"
+            fi
+        done < <(sed 's/\\x09/\t/g' "$STATS_FILE")
     fi
     
     cd "$PROJECT_DIR"
@@ -218,8 +234,16 @@ run_full_test() {
     
     # 5. 等待处理
     echo "=== 步骤5: 等待处理 ==="
-    echo "等待 10 秒让Zeek处理邮件..."
-    sleep 10
+    echo "等待所有邮件完全处理完成..."
+    
+    # 等待足够长的时间确保所有邮件都被处理（每封邮件1.5秒 + 额外缓冲）
+    local wait_time=$((email_count * 2 + 5))
+    echo "等待 $wait_time 秒让Zeek处理 $email_count 封邮件..."
+    sleep $wait_time
+    
+    # 额外等待以确保所有连接完全关闭
+    echo "额外等待 5 秒确保所有连接完全关闭..."
+    sleep 5
     
     # 6. 停止Zeek
     echo "=== 步骤6: 停止监控 ==="

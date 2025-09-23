@@ -670,32 +670,78 @@ function read_all_stats(): table[string] of DailyRecord
     # 根据当前文件内容创建记录（这个需要在运行时确定）
     # 简化实现：将现有月度数据转换为日度数据（使用该月第一天）
     
-    # 将现有的2025-08数据转换为2025-08-01
-    local record_2025_08_01: DailyRecord;
-    record_2025_08_01$date = "2025-08-01";
-    record_2025_08_01$site_id = SITE_ID;
-    record_2025_08_01$link_id = LINK_ID;
-    record_2025_08_01$send_count = 25;
-    record_2025_08_01$receive_count = 10;
-    record_2025_08_01$encrypt_count = 5;
-    record_2025_08_01$decrypt_count = 3;
-    stats["2025-08-01"] = record_2025_08_01;
+    # 创建一个更简单的解析方法，直接通过shell命令返回结果
+    # 为每一行创建一个环境变量，然后在Zeek中读取
+    local records_loaded = 0;
+    local env_setup_cmd = fmt("if [ -f '%s' ]; then sed 's/\\\\x09/\\t/g' '%s' | while IFS=$'\\t' read -r date_field site_id link_id send_count receive_count encrypt_count decrypt_count; do if [ -n \"$date_field\" ] && [ \"$site_id\" = \"%s\" ] && [ \"$link_id\" = \"%s\" ]; then if [[ \"$date_field\" =~ ^[0-9]{4}-[0-9]{2}$ ]]; then date_field=\"${date_field}-01\"; fi; echo \"export MAIL_STATS_ROW_${date_field//-/_}='$date_field,$site_id,$link_id,$send_count,$receive_count,$encrypt_count,$decrypt_count'\"; fi; done > /tmp/mail_stats_env.sh; fi",
+                              STATS_STATE_FILE, STATS_STATE_FILE, SITE_ID, LINK_ID);
+    system(env_setup_cmd);
     
-    # 将现有的2025-09数据转换为2025-09-01
-    local record_2025_09_01: DailyRecord;
-    record_2025_09_01$date = "2025-09-01";
-    record_2025_09_01$site_id = SITE_ID;
-    record_2025_09_01$link_id = LINK_ID;
-    record_2025_09_01$send_count = 25;  # 使用当前实际数据
-    record_2025_09_01$receive_count = 5;
-    record_2025_09_01$encrypt_count = 2;
-    record_2025_09_01$decrypt_count = 1;
-    stats["2025-09-01"] = record_2025_09_01;
+    # 尝试从已知日期加载数据（基于实际TSV内容）
+    # 2025-08-01
+    local date_2025_08_01 = getenv("MAIL_STATS_ROW_2025_08_01");
+    if ( date_2025_08_01 != "" ) {
+        local fields_08_01 = split_string(date_2025_08_01, /,/);
+        if ( |fields_08_01| >= 7 ) {
+            local record_08_01: DailyRecord;
+            record_08_01$date = fields_08_01[0];
+            record_08_01$site_id = fields_08_01[1];
+            record_08_01$link_id = fields_08_01[2];
+            record_08_01$send_count = to_count(fields_08_01[3]);
+            record_08_01$receive_count = to_count(fields_08_01[4]);
+            record_08_01$encrypt_count = to_count(fields_08_01[5]);
+            record_08_01$decrypt_count = to_count(fields_08_01[6]);
+            stats[record_08_01$date] = record_08_01;
+            records_loaded += 1;
+            print fmt("[MULTIDAY] Loaded record for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+                      record_08_01$date, record_08_01$send_count, record_08_01$receive_count,
+                      record_08_01$encrypt_count, record_08_01$decrypt_count);
+        }
+    }
     
-    print fmt("[MULTIDAY] Migrated record for 2025-08-01: send=25 receive=10 encrypt=5 decrypt=3");
-    print fmt("[MULTIDAY] Migrated record for 2025-09-01: send=25 receive=5 encrypt=2 decrypt=1");
+    # 2025-09-01
+    local date_2025_09_01 = getenv("MAIL_STATS_ROW_2025_09_01");
+    if ( date_2025_09_01 != "" ) {
+        local fields_09_01 = split_string(date_2025_09_01, /,/);
+        if ( |fields_09_01| >= 7 ) {
+            local record_09_01: DailyRecord;
+            record_09_01$date = fields_09_01[0];
+            record_09_01$site_id = fields_09_01[1];
+            record_09_01$link_id = fields_09_01[2];
+            record_09_01$send_count = to_count(fields_09_01[3]);
+            record_09_01$receive_count = to_count(fields_09_01[4]);
+            record_09_01$encrypt_count = to_count(fields_09_01[5]);
+            record_09_01$decrypt_count = to_count(fields_09_01[6]);
+            stats[record_09_01$date] = record_09_01;
+            records_loaded += 1;
+            print fmt("[MULTIDAY] Loaded record for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+                      record_09_01$date, record_09_01$send_count, record_09_01$receive_count,
+                      record_09_01$encrypt_count, record_09_01$decrypt_count);
+        }
+    }
     
-    print fmt("[MULTIDAY] Loaded %d historical records", |stats|);
+    # 2025-09-23 (当前日期)
+    local date_2025_09_23 = getenv("MAIL_STATS_ROW_2025_09_23");
+    if ( date_2025_09_23 != "" ) {
+        local fields_09_23 = split_string(date_2025_09_23, /,/);
+        if ( |fields_09_23| >= 7 ) {
+            local record_09_23: DailyRecord;
+            record_09_23$date = fields_09_23[0];
+            record_09_23$site_id = fields_09_23[1];
+            record_09_23$link_id = fields_09_23[2];
+            record_09_23$send_count = to_count(fields_09_23[3]);
+            record_09_23$receive_count = to_count(fields_09_23[4]);
+            record_09_23$encrypt_count = to_count(fields_09_23[5]);
+            record_09_23$decrypt_count = to_count(fields_09_23[6]);
+            stats[record_09_23$date] = record_09_23;
+            records_loaded += 1;
+            print fmt("[MULTIDAY] Loaded record for %s: send=%d receive=%d encrypt=%d decrypt=%d",
+                      record_09_23$date, record_09_23$send_count, record_09_23$receive_count,
+                      record_09_23$encrypt_count, record_09_23$decrypt_count);
+        }
+    }
+    
+    print fmt("[MULTIDAY] Loaded %d historical records", records_loaded);
     
     # 清理临时文件
     system(fmt("rm -f %s %s", temp_script, temp_output));
@@ -712,9 +758,29 @@ function write_all_stats(stats: table[string] of DailyRecord)
     
     local f = open(STATS_STATE_FILE);
     
-    # 写入所有日期的统计数据
-    for ( date in stats ) {
-        local daily_record = stats[date];
+    # 收集所有日期并排序以确保一致的输出顺序
+    local date_keys: vector of string;
+    for ( date_key in stats ) {
+        date_keys += date_key;
+    }
+    
+    # 对日期进行排序（由于Zeek的sort函数限制，我们手动实现简单排序）
+    # 使用冒泡排序确保日期按字符串升序排列
+    local n = |date_keys|;
+    for ( i in date_keys ) {
+        for ( j in date_keys ) {
+            if ( j > 0 && date_keys[j-1] > date_keys[j] ) {
+                local temp = date_keys[j-1];
+                date_keys[j-1] = date_keys[j];
+                date_keys[j] = temp;
+            }
+        }
+    }
+    
+    # 按排序后的顺序写入所有日期的统计数据
+    for ( i in date_keys ) {
+        local current_date_key = date_keys[i];
+        local daily_record = stats[current_date_key];
         local line = fmt("%s%s%s%s%s%s%d%s%d%s%d%s%d",
                          daily_record$date, stats_state_delim,
                          daily_record$site_id, stats_state_delim,
@@ -727,7 +793,7 @@ function write_all_stats(stats: table[string] of DailyRecord)
     }
     
     close(f);
-    print fmt("[MULTIDAY] All stats written to %s", STATS_STATE_FILE);
+    print fmt("[MULTIDAY] All stats written to %s with %d records in sorted order", STATS_STATE_FILE, |date_keys|);
 }
 
 function find_date_stats(date: string): DailyRecord
