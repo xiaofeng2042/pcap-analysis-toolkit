@@ -30,10 +30,27 @@ log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
+# Helper function to run command with timeout if available
+run_with_timeout() {
+    local seconds="$1"
+    shift
+    
+    # Check if timeout command is available
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$seconds" "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        # GNU timeout on macOS (if installed via brew install coreutils)
+        gtimeout "$seconds" "$@"
+    else
+        # No timeout available, run directly
+        "$@"
+    fi
+}
+
 # Test 1: Archive status
 test_archive_status() {
     log_test "Testing archive status..."
-    if "$PROJECT_DIR/scripts/rotate-mail-stats.sh" status > /dev/null 2>&1; then
+    if run_with_timeout 10 "$PROJECT_DIR/scripts/rotate-mail-stats.sh" status > /dev/null 2>&1; then
         log_pass "Archive status command works"
         return 0
     else
@@ -62,7 +79,7 @@ EOF
     
     # Test dry run first
     log_test "Testing monthly rotation dry run..."
-    if "$PROJECT_DIR/scripts/rotate-mail-stats.sh" force-monthly --dry-run > /dev/null 2>&1; then
+    if run_with_timeout 10 "$PROJECT_DIR/scripts/rotate-mail-stats.sh" force-monthly --dry-run > /dev/null 2>&1; then
         log_pass "Monthly rotation dry run works"
     else
         log_fail "Monthly rotation dry run failed"
@@ -70,7 +87,7 @@ EOF
     
     # Test actual rotation
     log_test "Testing actual monthly rotation..."
-    if "$PROJECT_DIR/scripts/rotate-mail-stats.sh" force-monthly > /dev/null 2>&1; then
+    if run_with_timeout 30 "$PROJECT_DIR/scripts/rotate-mail-stats.sh" force-monthly > /dev/null 2>&1; then
         log_pass "Monthly rotation completed"
         
         # Check if archive was created
@@ -103,7 +120,7 @@ test_size_rotation() {
     log_test "Testing size-based rotation..."
     
     # Test with very small limit to trigger rotation
-    if "$PROJECT_DIR/scripts/rotate-mail-stats.sh" size --max-size 0 --dry-run > /dev/null 2>&1; then
+    if run_with_timeout 10 "$PROJECT_DIR/scripts/rotate-mail-stats.sh" size --max-size 0 --dry-run > /dev/null 2>&1; then
         log_pass "Size rotation check works"
     else
         log_warn "Size rotation check may need adjustment"
@@ -115,7 +132,7 @@ test_archive_query() {
     log_test "Testing archive query functionality..."
     
     # This might fail if no archives exist, but we test the command structure
-    if "$PROJECT_DIR/scripts/rotate-mail-stats.sh" query 2025-01-01 2025-12-31 > /dev/null 2>&1; then
+    if run_with_timeout 10 "$PROJECT_DIR/scripts/rotate-mail-stats.sh" query 2025-01-01 2025-12-31 > /dev/null 2>&1; then
         log_pass "Archive query command structure works"
     else
         log_warn "Archive query may need data to test properly"
