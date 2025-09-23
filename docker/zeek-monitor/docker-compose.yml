@@ -5,6 +5,7 @@ services:
     image: zeek/zeek:latest
     container_name: zeek-mail-monitor
     network_mode: host                      # needed for packet capture
+    working_dir: /logs                      # set working directory to mounted volume
     cap_add:
       - NET_ADMIN
       - NET_RAW
