@@ -308,14 +308,24 @@ function generate_mail_flow_record(c: connection, info: Info)
     Log::write(FLOW_LOG, flow_info);
     print fmt("[DEBUG] Wrote flow record to log: %s", c$uid);
     
-    # 更新月度统计
-    # 临时修复：基于端口判断发送/接收，用于测试统计功能
-    local action_type = "receive";  # 默认为接收
-    if ( c$id$resp_p == 25/tcp || c$id$resp_p == 465/tcp || c$id$resp_p == 587/tcp || c$id$resp_p == 2525/tcp || c$id$resp_p == 3025/tcp ) {
-        # 如果是连接到SMTP服务器端口，则认为是发送
+    # 更新月度统计（重点关注投入本机的包）
+    local action_type = "receive";
+    if ( flow_info$direction_raw == "inbound_to_local" || flow_info$direction_raw == "internal_to_local" ) {
+        action_type = "receive";  # 投入本机的包都算作接收
+        print fmt("[LOCAL] Detected mail TO local machine: %s", c$uid);
+    } else if ( flow_info$direction_raw == "outbound_from_local" ) {
+        action_type = "send";     # 从本机发出的包算作发送
+        print fmt("[LOCAL] Detected mail FROM local machine: %s", c$uid);
+    } else if ( flow_info$direction_raw == "outbound" ) {
         action_type = "send";
+    } else if ( flow_info$direction_raw == "inbound" ) {
+        action_type = "receive";
+    } else if ( c$id$resp_p in SMTP_PORTS ) {
+        action_type = "send";
+    } else if ( c$id$resp_p in POP3_PORTS || c$id$resp_p in IMAP_PORTS ) {
+        action_type = "receive";
     }
-    
+
     print fmt("[DEBUG] SMTP connection %s:%d -> %s:%d, action_type=%s, direction_raw=%s", 
               c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, action_type, flow_info$direction_raw);
     

@@ -95,34 +95,38 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
     
-    # 2. IP地址分析（辅助证据）
+    # 2. IP地址分析（重点关注投入本机的包）
     local orig_is_internal = Site::is_local_addr(orig_addr);
     local resp_is_internal = Site::is_local_addr(resp_addr);
     
-    if (orig_is_internal && !resp_is_internal) {
-        result$evidence += fmt("IP_FLOW:internal->external");
-        if (result$direction_raw == "unknown") {
-            result$direction_raw = "outbound";
-            result$confidence = 0.7;
-        } else if (result$direction_raw == "outbound") {
-            result$confidence += 0.1;  # 增强置信度
+    # 优先检测投入本机的包（目标为本机的连接）
+    if (resp_is_internal) {
+        if (!orig_is_internal) {
+            # 外部向本机发送邮件 - 这是我们重点关注的"投入本机"的包
+            result$evidence += fmt("IP_FLOW:external->local_machine");
+            result$direction_raw = "inbound_to_local";
+            result$confidence = 0.9;  # 高置信度，这是我们的主要目标
+        } else {
+            # 内网向本机发送 - 也是投入本机的包
+            result$evidence += fmt("IP_FLOW:internal->local_machine");
+            result$direction_raw = "internal_to_local";
+            result$confidence = 0.8;
         }
-    } else if (!orig_is_internal && resp_is_internal) {
-        result$evidence += fmt("IP_FLOW:external->internal");
-        if (result$direction_raw == "unknown") {
-            result$direction_raw = "inbound";
-            result$confidence = 0.7;
-        } else if (result$direction_raw == "inbound") {
-            result$confidence += 0.1;  # 增强置信度
-        }
-    } else if (orig_is_internal && resp_is_internal) {
-        result$direction_raw = "internal";
-        result$confidence = 0.8;
-        result$evidence += "IP_FLOW:internal->internal";
-    } else {
-        result$direction_raw = "transit";
+    } else if (orig_is_internal && !resp_is_internal) {
+        # 本机向外部发送 - 次要关注
+        result$evidence += fmt("IP_FLOW:local_machine->external");
+        result$direction_raw = "outbound_from_local";
         result$confidence = 0.6;
-        result$evidence += "IP_FLOW:external->external";
+    } else if (orig_is_internal && resp_is_internal) {
+        # 内网互连 - 可能包含本机
+        result$evidence += fmt("IP_FLOW:internal->internal");
+        result$direction_raw = "internal";
+        result$confidence = 0.5;
+    } else {
+        # 外网中转 - 不是我们关注的重点
+        result$evidence += fmt("IP_FLOW:external->external");
+        result$direction_raw = "transit";
+        result$confidence = 0.2;  # 低置信度，不是重点
     }
     
     # 3. SMTP角色验证（如果有相关信息）
@@ -141,7 +145,38 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
     
-    # 4. 链路加密状态验证
+    # 4. 协议端口兜底逻辑（优先考虑投入本机的包）
+    if (result$direction_raw == "unknown" || result$confidence < 0.6) {
+        local service_port = c$id$resp_p;
+        
+        # 检查是否为投入本机的邮件服务连接
+        if (resp_is_internal) {
+            if (service_port in SMTP_PORTS) {
+                # 外部向本机SMTP服务器发送邮件
+                result$direction_raw = "inbound_to_local";
+                result$confidence = 0.8;
+                result$evidence += fmt("PORT_HEURISTIC:SMTP_to_local");
+            } else if (service_port in POP3_PORTS || service_port in IMAP_PORTS) {
+                # 客户端连接本机的POP3/IMAP服务器收取邮件
+                result$direction_raw = "inbound_to_local";
+                result$confidence = 0.8;
+                result$evidence += fmt("PORT_HEURISTIC:%s_to_local", identify_protocol(service_port));
+            }
+        } else {
+            # 非本机目标的连接，降低优先级
+            if (service_port in SMTP_PORTS) {
+                result$direction_raw = "outbound_from_local";
+                result$confidence = 0.5;  # 降低置信度
+                result$evidence += fmt("PORT_HEURISTIC:SMTP_from_local");
+            } else if (service_port in POP3_PORTS || service_port in IMAP_PORTS) {
+                result$direction_raw = "outbound_from_local";
+                result$confidence = 0.5;  # 降低置信度
+                result$evidence += fmt("PORT_HEURISTIC:%s_from_local", identify_protocol(service_port));
+            }
+        }
+    }
+
+    # 5. 链路加密状态验证
     if (track$link_encrypted) {
         result$evidence += "LINK:encrypted";
         # 加密连接通常表示出站流量
@@ -174,9 +209,19 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
     return result;
 }
 
-# 改进的标准化动作函数
+# 改进的标准化动作函数（重点关注投入本机的动作）
 function standardize_action(site_id: string, direction: string): string
 {
+    # 优先处理投入本机的动作
+    if (direction == "inbound_to_local") {
+        return "receive_to_local_machine";
+    } else if (direction == "internal_to_local") {
+        return "internal_to_local_machine";
+    } else if (direction == "outbound_from_local") {
+        return "send_from_local_machine";
+    }
+    
+    # 原有的站点间逻辑保持不变，但优先级降低
     if (site_id == "overseas") {
         if (direction == "outbound") {
             return "send_to_hq";
@@ -198,7 +243,7 @@ function standardize_action(site_id: string, direction: string): string
             return "hq_transit";
         }
     } else {
-        # 通用站点
+        # 通用站点 - 重点关注本机相关动作
         if (direction == "outbound") {
             return "send_to_peer";
         } else if (direction == "inbound") {
