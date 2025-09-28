@@ -153,26 +153,26 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         syn_path = interface_paths[uid];
         
         if (orig_is_tunnel && syn_path == fmt("%s->%s", TUNNEL_INTERFACE, LAN_INTERFACE)) {
-            # 从隧道网络来的流量：解密后的入站邮件
-            result$evidence += fmt("TUNNEL_FLOW:decrypted_inbound_from_%s", orig_addr);
-            result$direction_raw = "inbound_to_local";
-            result$confidence = 0.95;  # 非常高的置信度
-            print fmt("[TUNNEL] Detected decrypted inbound mail from tunnel: %s", uid);
-        } else if (resp_is_tunnel && syn_path == fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE)) {
-            # 发往隧道网络的流量：待加密的出站邮件
-            result$evidence += fmt("TUNNEL_FLOW:outbound_to_encrypt_%s", resp_addr);
+            # tap_tap->eth0 + 源IP在隧道 = 从隧道发出的邮件（出站+加密）
+            result$evidence += fmt("TUNNEL_FLOW:encrypted_outbound_from_%s", orig_addr);
             result$direction_raw = "outbound_from_local";
             result$confidence = 0.95;  # 非常高的置信度
-            print fmt("[TUNNEL] Detected outbound mail to tunnel: %s", uid);
-        } else if (orig_is_tunnel) {
-            # 隧道源地址但路径不明确，倾向于入站
-            result$evidence += fmt("TUNNEL_FLOW:likely_inbound_%s", orig_addr);
+            print fmt("[TUNNEL] Detected encrypted outbound mail from tunnel: %s", uid);
+        } else if (!orig_is_tunnel && syn_path == fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE)) {
+            # eth0->tap_tap + 源IP不在隧道 = 进入隧道的邮件（入站+解密）
+            result$evidence += fmt("TUNNEL_FLOW:decrypted_inbound_to_tunnel");
             result$direction_raw = "inbound_to_local";
+            result$confidence = 0.95;  # 非常高的置信度
+            print fmt("[TUNNEL] Detected decrypted inbound mail to tunnel: %s", uid);
+        } else if (orig_is_tunnel) {
+            # 隧道源地址但路径不明确，按IP判定：从隧道发出=出站
+            result$evidence += fmt("TUNNEL_FLOW:likely_outbound_%s", orig_addr);
+            result$direction_raw = "outbound_from_local";
             result$confidence = 0.85;
         } else if (resp_is_tunnel) {
-            # 隧道目标地址但路径不明确，倾向于出站
-            result$evidence += fmt("TUNNEL_FLOW:likely_outbound_%s", resp_addr);
-            result$direction_raw = "outbound_from_local";
+            # 隧道目标地址但路径不明确，按IP判定：发往隧道=入站
+            result$evidence += fmt("TUNNEL_FLOW:likely_inbound_%s", resp_addr);
+            result$direction_raw = "inbound_to_local";
             result$confidence = 0.85;
         }
     }

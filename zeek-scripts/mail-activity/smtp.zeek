@@ -293,18 +293,18 @@ function generate_mail_flow_record(c: connection, info: Info)
         flow_info$link_encrypted = track$link_encrypted;
         flow_info$link_decrypted = track$link_decrypted;
         
-        # 隧道连接的加密/解密状态处理
+        # 隧道连接的加密/解密状态处理（基于修正后的方向判定）
         if ( is_tunnel_conn ) {
-            if ( flow_info$direction_raw == "inbound_to_local" && is_tunnel_address(c$id$orig_h) ) {
-                # 从隧道网络来的流量：解密后的入站邮件
-                flow_info$link_decrypted = T;
-                flow_info$link_encrypted = F;  # 在本地已经是解密状态
-                print fmt("[TUNNEL] Marked tunnel inbound traffic as decrypted: %s", c$uid);
-            } else if ( flow_info$direction_raw == "outbound_from_local" && is_tunnel_address(c$id$resp_h) ) {
-                # 发往隧道网络的流量：待加密的出站邮件
+            if ( flow_info$direction_raw == "outbound_from_local" && is_tunnel_address(c$id$orig_h) ) {
+                # 从隧道发出的流量：已加密的出站邮件
                 flow_info$link_encrypted = T;
                 flow_info$link_decrypted = F;
                 print fmt("[TUNNEL] Marked tunnel outbound traffic as encrypted: %s", c$uid);
+            } else if ( flow_info$direction_raw == "inbound_to_local" && is_tunnel_address(c$id$resp_h) ) {
+                # 进入隧道的流量：解密后的入站邮件  
+                flow_info$link_decrypted = T;
+                flow_info$link_encrypted = F;
+                print fmt("[TUNNEL] Marked tunnel inbound traffic as decrypted: %s", c$uid);
             } else if ( !track$link_encrypted ) {
                 # 默认情况下隧道连接标记为加密
                 flow_info$link_encrypted = T;
