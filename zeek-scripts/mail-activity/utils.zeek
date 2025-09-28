@@ -47,6 +47,19 @@ function is_tunnel_connection(c: connection): bool
     return is_tunnel_address(c$id$orig_h) || is_tunnel_address(c$id$resp_h);
 }
 
+# 检查隧道IP是否为本地设备IP
+function is_local_tunnel_ip(ip: addr): bool
+{
+    # 首先确认IP在隧道网段内
+    if (!is_tunnel_address(ip)) {
+        return F;
+    }
+    
+    # 使用Site::is_local_addr检查是否为本地IP
+    # 这会检查IP是否在Site::local_nets定义的本地网络中
+    return Site::is_local_addr(ip);
+}
+
 # 工具函数：创建基础Info记录
 function create_base_info(c: connection): Info
 {

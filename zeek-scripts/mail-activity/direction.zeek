@@ -148,32 +148,42 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
     local is_tunnel_conn = orig_is_tunnel || resp_is_tunnel;
     local is_tap_interface = is_through_tap_interface(c);
     
-    # 特殊处理：隧道流量方向判定（基于SYN路径和隧道IP）
-    if (is_tunnel_conn && uid in interface_paths) {
-        syn_path = interface_paths[uid];
-        
-        if (orig_is_tunnel && syn_path == fmt("%s->%s", TUNNEL_INTERFACE, LAN_INTERFACE)) {
-            # tap_tap->eth0 + 源IP在隧道 = 从隧道发出的邮件（出站+加密）
-            result$evidence += fmt("TUNNEL_FLOW:encrypted_outbound_from_%s", orig_addr);
-            result$direction_raw = "outbound_from_local";
-            result$confidence = 0.95;  # 非常高的置信度
-            print fmt("[TUNNEL] Detected encrypted outbound mail from tunnel: %s", uid);
-        } else if (!orig_is_tunnel && syn_path == fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE)) {
-            # eth0->tap_tap + 源IP不在隧道 = 进入隧道的邮件（入站+解密）
-            result$evidence += fmt("TUNNEL_FLOW:decrypted_inbound_to_tunnel");
-            result$direction_raw = "inbound_to_local";
-            result$confidence = 0.95;  # 非常高的置信度
-            print fmt("[TUNNEL] Detected decrypted inbound mail to tunnel: %s", uid);
-        } else if (orig_is_tunnel) {
-            # 隧道源地址但路径不明确，按IP判定：从隧道发出=出站
-            result$evidence += fmt("TUNNEL_FLOW:likely_outbound_%s", orig_addr);
-            result$direction_raw = "outbound_from_local";
-            result$confidence = 0.85;
+    # 特殊处理：隧道流量方向判定（基于本地IP检测）
+    if (is_tunnel_conn) {
+        if (orig_is_tunnel) {
+            if (is_local_tunnel_ip(orig_addr)) {
+                # 本地隧道IP发出的流量：待加密的出站邮件
+                result$evidence += fmt("TUNNEL_LOCAL_IP:encrypt_outbound_%s", orig_addr);
+                result$direction_raw = "outbound_from_local";
+                result$confidence = 0.98;  # 极高置信度
+                print fmt("[TUNNEL] Local tunnel IP sending mail (encrypt): %s", uid);
+            } else {
+                # 远端隧道IP发来的流量：解密后的入站邮件
+                result$evidence += fmt("TUNNEL_REMOTE_IP:decrypt_inbound_%s", orig_addr);
+                result$direction_raw = "inbound_to_local";
+                result$confidence = 0.98;  # 极高置信度
+                print fmt("[TUNNEL] Remote tunnel IP sending mail (decrypt): %s", uid);
+            }
         } else if (resp_is_tunnel) {
-            # 隧道目标地址但路径不明确，按IP判定：发往隧道=入站
-            result$evidence += fmt("TUNNEL_FLOW:likely_inbound_%s", resp_addr);
-            result$direction_raw = "inbound_to_local";
-            result$confidence = 0.85;
+            if (is_local_tunnel_ip(resp_addr)) {
+                # 发往本地隧道IP的流量：内部流量（不常见）
+                result$evidence += fmt("TUNNEL_LOCAL_IP:internal_%s", resp_addr);
+                result$direction_raw = "internal_to_local";
+                result$confidence = 0.90;
+                print fmt("[TUNNEL] Mail to local tunnel IP (internal): %s", uid);
+            } else {
+                # 发往远端隧道IP的流量：待加密的出站邮件
+                result$evidence += fmt("TUNNEL_REMOTE_IP:encrypt_outbound_%s", resp_addr);
+                result$direction_raw = "outbound_from_local";
+                result$confidence = 0.98;  # 极高置信度
+                print fmt("[TUNNEL] Mail to remote tunnel IP (encrypt): %s", uid);
+            }
+        }
+        
+        # 添加SYN路径作为辅助证据（如果可用）
+        if (uid in interface_paths) {
+            syn_path = interface_paths[uid];
+            result$evidence += fmt("SYN_PATH:%s", syn_path);
         }
     }
     
