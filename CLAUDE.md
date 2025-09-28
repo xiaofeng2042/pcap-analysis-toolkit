@@ -82,3 +82,4 @@ Mail protocol ports are defined in const sets (SMTP_PORTS, POP3_PORTS, IMAP_PORT
 - Generated logs in output/ are git-ignored to prevent accidental commits
 - Use BPF filters to limit capture scope and reduce noise
 - 验证seek文件语法要用 zeek -C
+- 你只需要验证代码的语法错误就行,我来帮你验证

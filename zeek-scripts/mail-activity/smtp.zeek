@@ -293,10 +293,23 @@ function generate_mail_flow_record(c: connection, info: Info)
         flow_info$link_encrypted = track$link_encrypted;
         flow_info$link_decrypted = track$link_decrypted;
         
-        # 确保隧道连接被正确标记为加密
-        if ( is_tunnel_conn && !track$link_encrypted ) {
-            flow_info$link_encrypted = T;
-            print fmt("[TUNNEL] Force-marking tunnel connection as encrypted: %s", c$uid);
+        # 隧道连接的加密/解密状态处理
+        if ( is_tunnel_conn ) {
+            if ( flow_info$direction_raw == "inbound_to_local" && is_tunnel_address(c$id$orig_h) ) {
+                # 从隧道网络来的流量：解密后的入站邮件
+                flow_info$link_decrypted = T;
+                flow_info$link_encrypted = F;  # 在本地已经是解密状态
+                print fmt("[TUNNEL] Marked tunnel inbound traffic as decrypted: %s", c$uid);
+            } else if ( flow_info$direction_raw == "outbound_from_local" && is_tunnel_address(c$id$resp_h) ) {
+                # 发往隧道网络的流量：待加密的出站邮件
+                flow_info$link_encrypted = T;
+                flow_info$link_decrypted = F;
+                print fmt("[TUNNEL] Marked tunnel outbound traffic as encrypted: %s", c$uid);
+            } else if ( !track$link_encrypted ) {
+                # 默认情况下隧道连接标记为加密
+                flow_info$link_encrypted = T;
+                print fmt("[TUNNEL] Force-marking tunnel connection as encrypted: %s", c$uid);
+            }
         }
     } else {
         flow_info$direction_raw = "unknown";
@@ -306,9 +319,17 @@ function generate_mail_flow_record(c: connection, info: Info)
         
         # 即使没有连接跟踪，也要检查隧道连接
         if ( is_tunnel_conn ) {
-            flow_info$link_encrypted = T;
-            flow_info$evidence = vector("tunnel_connection");
-            print fmt("[TUNNEL] Tunnel connection detected without tracking: %s", c$uid);
+            if ( is_tunnel_address(c$id$orig_h) ) {
+                # 从隧道网络来的流量可能是解密的
+                flow_info$link_decrypted = T;
+                flow_info$evidence = vector("tunnel_inbound_connection");
+                print fmt("[TUNNEL] Tunnel inbound connection detected without tracking: %s", c$uid);
+            } else {
+                # 发往隧道网络的流量是加密的
+                flow_info$link_encrypted = T;
+                flow_info$evidence = vector("tunnel_outbound_connection");
+                print fmt("[TUNNEL] Tunnel outbound connection detected without tracking: %s", c$uid);
+            }
         }
     }
     

@@ -120,10 +120,11 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
     local uid = c$uid;
     local orig_addr = c$id$orig_h;
     local resp_addr = c$id$resp_h;
+    local syn_path = "";
     
     # 1. SYN路径分析（主要证据）
     if (uid in interface_paths) {
-        local syn_path = interface_paths[uid];
+        syn_path = interface_paths[uid];
         result$evidence += fmt("SYN_PATH:%s", syn_path);
         
         if (syn_path == fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE)) {
@@ -139,7 +140,7 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
     
-    # 2. IP地址分析（重点关注投入本机的包）
+    # 2. 隧道流量特殊处理（优先级最高）
     local orig_is_internal = is_internal_address(orig_addr);
     local resp_is_internal = is_internal_address(resp_addr);
     local orig_is_tunnel = is_tunnel_address(orig_addr);
@@ -147,37 +148,69 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
     local is_tunnel_conn = orig_is_tunnel || resp_is_tunnel;
     local is_tap_interface = is_through_tap_interface(c);
     
-    # 优先检测投入本机的包（目标为本机的连接）
-    if (resp_is_internal) {
-        if (!orig_is_internal) {
-            # 外部向本机发送邮件 - 这是我们重点关注的"投入本机"的包
-            result$evidence += fmt("IP_FLOW:external->local_machine");
+    # 特殊处理：隧道流量方向判定（基于SYN路径和隧道IP）
+    if (is_tunnel_conn && uid in interface_paths) {
+        syn_path = interface_paths[uid];
+        
+        if (orig_is_tunnel && syn_path == fmt("%s->%s", TUNNEL_INTERFACE, LAN_INTERFACE)) {
+            # 从隧道网络来的流量：解密后的入站邮件
+            result$evidence += fmt("TUNNEL_FLOW:decrypted_inbound_from_%s", orig_addr);
             result$direction_raw = "inbound_to_local";
-            result$confidence = 0.9;  # 高置信度，这是我们的主要目标
-        } else {
-            # 内网向本机发送 - 也是投入本机的包
-            result$evidence += fmt("IP_FLOW:internal->local_machine");
-            result$direction_raw = "internal_to_local";
-            result$confidence = 0.8;
+            result$confidence = 0.95;  # 非常高的置信度
+            print fmt("[TUNNEL] Detected decrypted inbound mail from tunnel: %s", uid);
+        } else if (resp_is_tunnel && syn_path == fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE)) {
+            # 发往隧道网络的流量：待加密的出站邮件
+            result$evidence += fmt("TUNNEL_FLOW:outbound_to_encrypt_%s", resp_addr);
+            result$direction_raw = "outbound_from_local";
+            result$confidence = 0.95;  # 非常高的置信度
+            print fmt("[TUNNEL] Detected outbound mail to tunnel: %s", uid);
+        } else if (orig_is_tunnel) {
+            # 隧道源地址但路径不明确，倾向于入站
+            result$evidence += fmt("TUNNEL_FLOW:likely_inbound_%s", orig_addr);
+            result$direction_raw = "inbound_to_local";
+            result$confidence = 0.85;
+        } else if (resp_is_tunnel) {
+            # 隧道目标地址但路径不明确，倾向于出站
+            result$evidence += fmt("TUNNEL_FLOW:likely_outbound_%s", resp_addr);
+            result$direction_raw = "outbound_from_local";
+            result$confidence = 0.85;
         }
-    } else if (orig_is_internal && !resp_is_internal) {
-        # 本机向外部发送 - 次要关注
-        result$evidence += fmt("IP_FLOW:local_machine->external");
-        result$direction_raw = "outbound_from_local";
-        result$confidence = 0.6;
-    } else if (orig_is_internal && resp_is_internal) {
-        # 内网互连 - 可能包含本机
-        result$evidence += fmt("IP_FLOW:internal->internal");
-        result$direction_raw = "internal";
-        result$confidence = 0.5;
-    } else {
-        # 外网中转 - 不是我们关注的重点
-        result$evidence += fmt("IP_FLOW:external->external");
-        result$direction_raw = "transit";
-        result$confidence = 0.2;  # 低置信度，不是重点
     }
     
-    # 3. SMTP角色验证（如果有相关信息）
+    # 3. 常规IP地址分析（隧道流量已处理的情况下执行）
+    if (result$confidence < 0.8) {  # 只有隧道检测置信度不高时才执行常规检测
+        # 优先检测投入本机的包（目标为本机的连接）
+        if (resp_is_internal) {
+            if (!orig_is_internal) {
+                # 外部向本机发送邮件 - 这是我们重点关注的"投入本机"的包
+                result$evidence += fmt("IP_FLOW:external->local_machine");
+                result$direction_raw = "inbound_to_local";
+                result$confidence = 0.9;  # 高置信度，这是我们的主要目标
+            } else {
+                # 内网向本机发送 - 也是投入本机的包
+                result$evidence += fmt("IP_FLOW:internal->local_machine");
+                result$direction_raw = "internal_to_local";
+                result$confidence = 0.8;
+            }
+        } else if (orig_is_internal && !resp_is_internal) {
+            # 本机向外部发送 - 次要关注
+            result$evidence += fmt("IP_FLOW:local_machine->external");
+            result$direction_raw = "outbound_from_local";
+            result$confidence = 0.6;
+        } else if (orig_is_internal && resp_is_internal) {
+            # 内网互连 - 可能包含本机
+            result$evidence += fmt("IP_FLOW:internal->internal");
+            result$direction_raw = "internal";
+            result$confidence = 0.5;
+        } else {
+            # 外网中转 - 不是我们关注的重点
+            result$evidence += fmt("IP_FLOW:external->external");
+            result$direction_raw = "transit";
+            result$confidence = 0.2;  # 低置信度，不是重点
+        }
+    }
+    
+    # 4. SMTP角色验证（如果有相关信息）
     if (track?$smtp_role) {
         result$evidence += fmt("SMTP_ROLE:%s", track$smtp_role);
         
@@ -193,7 +226,7 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
     
-    # 4. 协议端口兜底逻辑（优先考虑投入本机的包）
+    # 5. 协议端口兜底逻辑（优先考虑投入本机的包）
     if (result$direction_raw == "unknown" || result$confidence < 0.6) {
         local service_port = c$id$resp_p;
         
@@ -224,7 +257,7 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
 
-    # 5. 隧道网络加密检测（新增）
+    # 6. 隧道网络加密检测（已整合到第2步，保留兼容性）
     if (is_tunnel_conn) {
         if (orig_is_tunnel) {
             result$evidence += fmt("TUNNEL:%s", orig_addr);
@@ -243,13 +276,13 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
     
-    # 6. tap_tap接口加密检测（新增）
+    # 7. tap_tap接口加密检测（已整合到第2步，保留兼容性）
     if (is_tap_interface) {
         result$evidence += fmt("INTERFACE:%s", TUNNEL_INTERFACE);
         result$confidence += 0.08;
     }
     
-    # 7. 链路加密状态验证（原有逻辑）
+    # 8. 链路加密状态验证（原有逻辑）
     if (track$link_encrypted) {
         result$evidence += "LINK:encrypted";
         # 加密连接通常表示出站流量
