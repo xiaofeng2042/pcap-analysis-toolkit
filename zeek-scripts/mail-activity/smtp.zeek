@@ -15,6 +15,13 @@ function new_smtp_info(c: connection): Info
     info$site_id = SITE_ID;
     info$link_id = LINK_ID;
     
+    # 检查隧道加密状态
+    local is_tunnel_conn = is_tunnel_connection(c);
+    if ( is_tunnel_conn ) {
+        info$link_encrypted = T;
+        print fmt("[TUNNEL] SMTP session marked as encrypted: %s (%s->%s)", c$uid, c$id$orig_h, c$id$resp_h);
+    }
+    
     # 进行方向判定
     if ( c$uid in connection_tracks ) {
         local track = connection_tracks[c$uid];
@@ -273,6 +280,8 @@ function generate_mail_flow_record(c: connection, info: Info)
     flow_info$resp_h = c$id$resp_h;
     
     # 方向判定信息（从连接跟踪获取）
+    local is_tunnel_conn = is_tunnel_connection(c);
+    
     if ( c$uid in connection_tracks ) {
         local track = connection_tracks[c$uid];
         local direction_info = determine_direction(c, track);
@@ -283,11 +292,24 @@ function generate_mail_flow_record(c: connection, info: Info)
         flow_info$confidence = direction_info$confidence;
         flow_info$link_encrypted = track$link_encrypted;
         flow_info$link_decrypted = track$link_decrypted;
+        
+        # 确保隧道连接被正确标记为加密
+        if ( is_tunnel_conn && !track$link_encrypted ) {
+            flow_info$link_encrypted = T;
+            print fmt("[TUNNEL] Force-marking tunnel connection as encrypted: %s", c$uid);
+        }
     } else {
         flow_info$direction_raw = "unknown";
         flow_info$action = "unknown";
         flow_info$evidence = vector("no_tracking_data");
         flow_info$confidence = 0.0;
+        
+        # 即使没有连接跟踪，也要检查隧道连接
+        if ( is_tunnel_conn ) {
+            flow_info$link_encrypted = T;
+            flow_info$evidence = vector("tunnel_connection");
+            print fmt("[TUNNEL] Tunnel connection detected without tracking: %s", c$uid);
+        }
     }
     
     # 邮件字段

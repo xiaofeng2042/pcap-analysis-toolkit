@@ -2,8 +2,50 @@
 # 提供通用工具函数和TLS/SSL加密处理功能
 
 @load base/protocols/ssl
+@load base/utils/site
 
 module MailActivity;
+
+# 定义隧道加密网络段
+const TUNNEL_NETWORKS: set[subnet] = {
+    1.1.0.0/24,      # VPN隧道网络段
+} &redef;
+
+# 内部网络配置
+const INTERNAL_NETWORKS: set[subnet] = {
+    10.0.0.0/8,      # RFC 1918 私有网络
+    172.16.0.0/12,   # RFC 1918 私有网络  
+    192.168.0.0/16,  # RFC 1918 私有网络
+    127.0.0.0/8,     # 回环地址
+} &redef;
+
+# 扩展 Site::local_nets 包含我们的内部网络定义
+redef Site::local_nets += INTERNAL_NETWORKS;
+# 同时将隧道网络也加入本地网络，这样可以正确识别方向
+redef Site::local_nets += TUNNEL_NETWORKS;
+
+# 检查IP地址是否在隧道网络中
+function is_tunnel_address(ip: addr): bool
+{
+    for (net in TUNNEL_NETWORKS) {
+        if (ip in net) {
+            return T;
+        }
+    }
+    return F;
+}
+
+# 检查IP地址是否为内部地址
+function is_internal_address(ip: addr): bool
+{
+    return Site::is_local_addr(ip);
+}
+
+# 检查连接是否涉及隧道网络
+function is_tunnel_connection(c: connection): bool
+{
+    return is_tunnel_address(c$id$orig_h) || is_tunnel_address(c$id$resp_h);
+}
 
 # 工具函数：创建基础Info记录
 function create_base_info(c: connection): Info

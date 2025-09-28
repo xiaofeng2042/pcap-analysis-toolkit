@@ -5,6 +5,7 @@
 @load base/protocols/conn
 @load base/protocols/ssl
 @load base/frameworks/packet-filter
+@load base/utils/site
 
 module MailActivity;
 
@@ -19,32 +20,63 @@ event new_packet(c: connection, p: pkt_hdr)
         return;
     
     local uid = c$uid;
+    local is_tunnel_conn = is_tunnel_connection(c);
     
     # 检查TCP标志位
     if (p$tcp?$flags && p$tcp$flags & TH_SYN != 0 && p$tcp$flags & TH_ACK == 0) {
         # 这是首个SYN包
-        local src_is_internal = Site::is_local_addr(c$id$orig_h);
-        local dst_is_internal = Site::is_local_addr(c$id$resp_h);
+        local src_is_internal = is_internal_address(c$id$orig_h);
+        local dst_is_internal = is_internal_address(c$id$resp_h);
+        local src_is_tunnel = is_tunnel_address(c$id$orig_h);
+        local dst_is_tunnel = is_tunnel_address(c$id$resp_h);
         
         # 简化的接口推断（基于IP地址范围）
         local syn_path = "";
-        if (src_is_internal && !dst_is_internal) {
-            # 内网向外网发起连接，SYN路径: eno1 -> tap_tap
-            syn_path = fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE);
-            # 标记为加密出站（通过隧道）
-            mark_connection_encrypted(uid, T, F);
-        } else if (!src_is_internal && dst_is_internal) {
-            # 外网向内网发起连接，SYN路径: tap_tap -> eno1  
-            syn_path = fmt("%s->%s", TUNNEL_INTERFACE, LAN_INTERFACE);
-            # 标记为解密入站（来自隧道）
-            mark_connection_encrypted(uid, F, T);
+        local is_encrypted = F;
+        local is_decrypted = F;
+        
+        # 隧道网络优先检测
+        if (src_is_tunnel || dst_is_tunnel) {
+            # 任何涉及1.1.0.*网段的连接都是加密的
+            if (src_is_tunnel && !dst_is_tunnel) {
+                # 从隧道网络向外发送
+                syn_path = fmt("%s->%s", TUNNEL_INTERFACE, LAN_INTERFACE);
+                is_encrypted = T;
+                print fmt("[TUNNEL] Encrypted outbound from tunnel network: %s", c$id$orig_h);
+            } else if (!src_is_tunnel && dst_is_tunnel) {
+                # 向隧道网络发送
+                syn_path = fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE);
+                is_encrypted = T;
+                print fmt("[TUNNEL] Encrypted inbound to tunnel network: %s", c$id$resp_h);
+            } else if (src_is_tunnel && dst_is_tunnel) {
+                # 隧道内部通信
+                syn_path = fmt("%s->%s", TUNNEL_INTERFACE, TUNNEL_INTERFACE);
+                is_encrypted = T;
+                print fmt("[TUNNEL] Encrypted tunnel-to-tunnel communication");
+            }
+            
+            # 标记隧道加密
+            mark_connection_encrypted(uid, is_encrypted, F);
         } else {
-            # 内网互连或外网中转
-            syn_path = "unknown";
+            # 传统逻辑处理非隧道流量
+            if (src_is_internal && !dst_is_internal) {
+                # 内网向外网发起连接，SYN路径: eno1 -> tap_tap
+                syn_path = fmt("%s->%s", LAN_INTERFACE, TUNNEL_INTERFACE);
+                # 标记为加密出站（通过隧道）
+                mark_connection_encrypted(uid, T, F);
+            } else if (!src_is_internal && dst_is_internal) {
+                # 外网向内网发起连接，SYN路径: tap_tap -> eno1  
+                syn_path = fmt("%s->%s", TUNNEL_INTERFACE, LAN_INTERFACE);
+                # 标记为解密入站（来自隧道）
+                mark_connection_encrypted(uid, F, T);
+            } else {
+                # 内网互连或外网中转
+                syn_path = "unknown";
+            }
         }
         
         interface_paths[uid] = syn_path;
-        print fmt("[SYN] Detected SYN packet: %s path=%s", uid, syn_path);
+        print fmt("[SYN] Detected SYN packet: %s path=%s tunnel=%s", uid, syn_path, is_tunnel_conn ? "yes" : "no");
     }
 }
 
@@ -62,6 +94,18 @@ function mark_connection_encrypted(uid: string, is_encrypted: bool, is_decrypted
     
     print fmt("[LINK] Connection %s: encrypted=%s decrypted=%s", 
               uid, is_encrypted ? "true" : "false", is_decrypted ? "true" : "false");
+}
+
+# 检查连接是否通过tap_tap接口（基于路径推断）
+function is_through_tap_interface(c: connection): bool
+{
+    local uid = c$uid;
+    if (uid in interface_paths) {
+        local path = interface_paths[uid];
+        # 检查路径是否涉及tap_tap接口
+        return (TUNNEL_INTERFACE in path);
+    }
+    return F;
 }
 
 # 改进的方向判定函数
@@ -96,8 +140,12 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
     }
     
     # 2. IP地址分析（重点关注投入本机的包）
-    local orig_is_internal = Site::is_local_addr(orig_addr);
-    local resp_is_internal = Site::is_local_addr(resp_addr);
+    local orig_is_internal = is_internal_address(orig_addr);
+    local resp_is_internal = is_internal_address(resp_addr);
+    local orig_is_tunnel = is_tunnel_address(orig_addr);
+    local resp_is_tunnel = is_tunnel_address(resp_addr);
+    local is_tunnel_conn = orig_is_tunnel || resp_is_tunnel;
+    local is_tap_interface = is_through_tap_interface(c);
     
     # 优先检测投入本机的包（目标为本机的连接）
     if (resp_is_internal) {
@@ -176,7 +224,32 @@ function determine_direction(c: connection, track: ConnectionTrack): DirectionIn
         }
     }
 
-    # 5. 链路加密状态验证
+    # 5. 隧道网络加密检测（新增）
+    if (is_tunnel_conn) {
+        if (orig_is_tunnel) {
+            result$evidence += fmt("TUNNEL:%s", orig_addr);
+        }
+        if (resp_is_tunnel) {
+            result$evidence += fmt("TUNNEL:%s", resp_addr);
+        }
+        
+        # 隧道网络流量被认为是加密的
+        result$confidence += 0.1;
+        
+        # 对于投入本机的隧道流量，进一步提高置信度
+        if (resp_is_internal && (orig_is_tunnel || resp_is_tunnel)) {
+            result$confidence += 0.05;
+            result$evidence += "TUNNEL_TO_LOCAL";
+        }
+    }
+    
+    # 6. tap_tap接口加密检测（新增）
+    if (is_tap_interface) {
+        result$evidence += fmt("INTERFACE:%s", TUNNEL_INTERFACE);
+        result$confidence += 0.08;
+    }
+    
+    # 7. 链路加密状态验证（原有逻辑）
     if (track$link_encrypted) {
         result$evidence += "LINK:encrypted";
         # 加密连接通常表示出站流量
@@ -276,11 +349,25 @@ event connection_established(c: connection)
         track$syn_path = "unknown";
     }
     
+    # 检查是否为隧道连接并标记加密状态
+    if (is_tunnel_connection(c)) {
+        track$link_encrypted = T;
+        print fmt("[TRACK] Tunnel connection detected and marked as encrypted: %s", uid);
+    }
+    
+    # 检查是否通过tap_tap接口
+    if (is_through_tap_interface(c)) {
+        track$link_encrypted = T;
+        print fmt("[TRACK] tap_tap interface connection detected and marked as encrypted: %s", uid);
+    }
+    
     # 存储连接跟踪
     connection_tracks[uid] = track;
     
-    print fmt("[TRACK] New mail connection: %s %s:%d -> %s:%d", 
-              uid, c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p);
+    print fmt("[TRACK] New mail connection: %s %s:%d -> %s:%d tunnel=%s tap=%s", 
+              uid, c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p,
+              is_tunnel_connection(c) ? "yes" : "no",
+              is_through_tap_interface(c) ? "yes" : "no");
 }
 
 # 连接结束事件 - 清理跟踪数据
