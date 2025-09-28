@@ -55,9 +55,8 @@ function is_local_tunnel_ip(ip: addr): bool
         return F;
     }
     
-    # 使用Site::is_local_addr检查是否为本地IP
-    # 这会检查IP是否在Site::local_nets定义的本地网络中
-    return Site::is_local_addr(ip);
+    # 精确检查是否为配置的本地隧道IP
+    return ip == LOCAL_TUNNEL_IP;
 }
 
 # 工具函数：创建基础Info记录

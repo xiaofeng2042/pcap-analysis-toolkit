@@ -37,6 +37,10 @@ export {
     option ARCHIVE_WINDOW_DAYS = getenv("MAIL_STATS_ARCHIVE_WINDOW") != "" ?
                                  to_count(getenv("MAIL_STATS_ARCHIVE_WINDOW")) : 30 &redef;    # 从归档加载的天数
     
+    # 本地隧道IP配置 - 用于精确判定流量方向
+    option LOCAL_TUNNEL_IP = getenv("LOCAL_TUNNEL_IP") != "" ? 
+                             to_addr(getenv("LOCAL_TUNNEL_IP")) : 1.1.0.2 &redef;            # 本地设备在隧道网段的IP
+    
     # 方向判定结果类型
     type DirectionInfo: record {
         direction_raw: string;                     # outbound/inbound
