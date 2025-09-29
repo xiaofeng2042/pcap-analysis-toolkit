@@ -351,30 +351,29 @@ function generate_mail_flow_record(c: connection, info: Info)
     Log::write(FLOW_LOG, flow_info);
     print fmt("[DEBUG] Wrote flow record to log: %s", c$uid);
     
-    # 更新月度统计（重点关注投入本机的包）
+    # 更新月度统计（简化的加密/解密判断逻辑）
     local action_type = "receive";
-    if ( flow_info$direction_raw == "inbound_to_local" || flow_info$direction_raw == "internal_to_local" ) {
-        action_type = "receive";  # 投入本机的包都算作接收
-        print fmt("[LOCAL] Detected mail TO local machine: %s", c$uid);
-    } else if ( flow_info$direction_raw == "outbound_from_local" ) {
-        action_type = "send";     # 从本机发出的包算作发送
-        print fmt("[LOCAL] Detected mail FROM local machine: %s", c$uid);
-    } else if ( flow_info$direction_raw == "outbound" ) {
+    local is_encrypted = F;
+    local is_decrypted = F;
+    
+    # 简化的加密/解密判断：基于源IP是否匹配本地隧道IP
+    if ( c$id$orig_h == LOCAL_TUNNEL_IP ) {
+        # 源IP匹配本地隧道IP：本地发送邮件，动作是加密
         action_type = "send";
-    } else if ( flow_info$direction_raw == "inbound" ) {
+        is_encrypted = T;
+        print fmt("[SIMPLE] Local tunnel IP sending mail (encrypt): %s", c$uid);
+    } else {
+        # 源IP不匹配：远程发送到本地，动作是解密
         action_type = "receive";
-    } else if ( c$id$resp_p in SMTP_PORTS ) {
-        action_type = "send";
-    } else if ( c$id$resp_p in POP3_PORTS || c$id$resp_p in IMAP_PORTS ) {
-        action_type = "receive";
+        is_decrypted = T;
+        print fmt("[SIMPLE] Remote tunnel IP sending mail (decrypt): %s", c$uid);
     }
 
-    print fmt("[DEBUG] SMTP connection %s:%d -> %s:%d, action_type=%s, direction_raw=%s", 
-              c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, action_type, flow_info$direction_raw);
+    print fmt("[DEBUG] SMTP connection %s:%d -> %s:%d, action_type=%s, encrypted=%s, decrypted=%s", 
+              c$id$orig_h, c$id$orig_p, c$id$resp_h, c$id$resp_p, action_type, 
+              is_encrypted ? "T" : "F", is_decrypted ? "T" : "F");
     
-    update_daily_stats(action_type, 
-                        flow_info$link_encrypted ? flow_info$link_encrypted : F,
-                        flow_info$link_decrypted ? flow_info$link_decrypted : F);
+    update_daily_stats(action_type, is_encrypted, is_decrypted);
     
     print fmt("[FLOW] Generated mail flow record: %s %s (msg_id=%s)", 
               flow_info$uid, flow_info$action, flow_info$msg_id);
