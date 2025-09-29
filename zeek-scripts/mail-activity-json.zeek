@@ -1024,7 +1024,7 @@ function get_date_range_stats(start_date: string, end_date: string): StatsAggreg
 module GLOBAL;
 @load ./mail-activity/utils
 @load ./mail-activity/direction
-# @load ./mail-activity/smtp  # 语法错误，暂时跳过
+@load ./mail-activity/smtp
 @load ./mail-activity/pop3
 @load ./mail-activity/imap
 module MailActivity;
@@ -1062,7 +1062,14 @@ function smtp_path_by_direction(id: Log::ID, path: string, rec: any): string
 # 设置SMTP日志分离过滤器
 function setup_smtp_log_separation()
 {
-    # 为内置SMTP日志添加自定义路径过滤器
+    # 首先移除默认过滤器避免冲突
+    Log::remove_default_filter(SMTP::LOG);
+    
+    # 预先创建日志目录
+    system("mkdir -p sent received");
+    print "[LOG_SEPARATION] Created log directories: sent/ and received/";
+    
+    # 添加我们的自定义路径过滤器
     local filter: Log::Filter = [
         $name = "smtp-direction-filter",
         $path_func = smtp_path_by_direction
