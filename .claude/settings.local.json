@@ -5,7 +5,8 @@
       "WebFetch(domain:docs.zeek.org)",
       "Read(/usr/local/Cellar/zeek/8.0.1/share/zeek/base/frameworks/logging/**)",
       "Read(/usr/local/Cellar/zeek/8.0.1/share/zeek/**)",
-      "Read(/usr/local/Cellar/zeek/8.0.1/share/zeek/base/frameworks/logging/**)"
+      "Read(/usr/local/Cellar/zeek/8.0.1/share/zeek/base/frameworks/logging/**)",
+      "Bash(SITE_ID=overseas zeek -C zeek-scripts/mail-activity-json.zeek)"
     ],
     "deny": [],
     "ask": []

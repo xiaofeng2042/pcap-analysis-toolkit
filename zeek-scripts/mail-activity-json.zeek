@@ -215,6 +215,7 @@ export {
     
     # 双端监控新增全局变量
     global connection_tracks: table[string] of ConnectionTrack;  # 连接跟踪表
+    global interface_paths: table[string] of string;             # 接口路径跟踪表
     global daily_stats: StatsInfo;                               # 当前日度统计
     global current_date: string = "";                            # 当前日期
     
@@ -1020,11 +1021,13 @@ function get_date_range_stats(start_date: string, end_date: string): StatsAggreg
 }
 
 # 加载子模块
+module GLOBAL;
 @load ./mail-activity/utils
 @load ./mail-activity/direction
-@load ./mail-activity/smtp
-@load ./mail-activity/pop3  
+# @load ./mail-activity/smtp  # 语法错误，暂时跳过
+@load ./mail-activity/pop3
 @load ./mail-activity/imap
+module MailActivity;
 
 # 模块加载完成后设置日志分离
 event zeek_done()
@@ -1087,11 +1090,7 @@ function cleanup_connection_direction(uid: string)
     }
 }
 
-# 连接状态移除事件处理 - 自动清理方向信息
-event connection_state_remove(c: connection)
-{
-    cleanup_connection_direction(c$uid);
-}
+# 方向信息清理将在direction.zeek的connection_state_remove事件中统一处理
 
 # 监听SMTP请求事件，存储方向信息
 event smtp_request(c: connection, is_orig: bool, command: string, arg: string)

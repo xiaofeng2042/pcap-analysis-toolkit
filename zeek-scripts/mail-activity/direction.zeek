@@ -9,8 +9,7 @@
 
 module MailActivity;
 
-# 接口路径跟踪表
-global interface_paths: table[string] of string;  # uid -> interface_path
+# 接口路径跟踪表已在主模块中定义
 
 # TCP包分析事件 - 捕获SYN包路径并检测链路加密
 event new_packet(c: connection, p: pkt_hdr)
@@ -427,6 +426,9 @@ event connection_state_remove(c: connection)
     if (uid in interface_paths) {
         delete interface_paths[uid];
     }
+    
+    # 清理日志分离的方向信息
+    cleanup_connection_direction(uid);
 }
 
 # SMTP角色检测函数（将在smtp.zeek中调用）
@@ -438,4 +440,7 @@ function update_smtp_role(uid: string, role: string)
     }
 }
 
-print "[INFO] Enhanced direction determination module loaded";
+event zeek_init()
+{
+    print "[INFO] Enhanced direction determination module loaded";
+}
