@@ -124,6 +124,7 @@ if [[ "$USE_DOCKER" == "true" ]]; then
     -e "LINK_ID=${LINK_ID:-}" \
     -e "LAN_INTERFACE=${LAN_INTERFACE:-eno1}" \
     -e "TUNNEL_INTERFACE=${TUNNEL_INTERFACE:-tap_tap}" \
+    -e "LOCAL_TUNNEL_IP=${LOCAL_TUNNEL_IP:-}" \
     -e "REPORT_INTERVAL=${REPORT_INTERVAL:-30}" \
     -e "MAIL_STATS_STATE_FILE=/state/mail_stats_state.tsv" \
     -e "MAIL_STATS_INIT_MONTH=${MAIL_STATS_INIT_MONTH:-}" \

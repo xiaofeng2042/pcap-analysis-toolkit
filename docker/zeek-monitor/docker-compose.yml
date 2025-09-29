@@ -23,6 +23,7 @@ services:
       REPORT_INTERVAL: ${REPORT_INTERVAL:-30}
       MAIL_STATS_STATE_FILE: /state/mail_stats_state.tsv
       ZEEK_IFACE: ${ZEEK_IFACE:-eth0}
+      LOCAL_TUNNEL_IP: ${LOCAL_TUNNEL_IP:-}
       FILTER: "${FILTER:-port 25 or port 465 or port 587 or port 1025 or port 2525 or port 110 or port 995 or port 143 or port 993 or port 3025 or port 3110 or port 3143 or port 3465 or port 3993 or port 3995}"
     command: >
       zeek -C -i ${ZEEK_IFACE:-eth0} -f "${FILTER}" /scripts/mail-activity-json.zeek
