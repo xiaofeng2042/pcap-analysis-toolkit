@@ -32,6 +32,9 @@ function new_smtp_info(c: connection): Info
         info$evidence = direction_info$evidence;
         info$confidence = direction_info$confidence;
         
+        # 存储方向信息用于日志分离
+        store_connection_direction(c$uid, direction_info$direction_raw);
+        
         # 记录方向判定日志
         local flow_info: FlowInfo;
         flow_info$ts = network_time();

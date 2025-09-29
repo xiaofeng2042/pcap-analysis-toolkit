@@ -286,6 +286,12 @@ export {
     global join_string_vec: function(vec: vector of string, sep: string): string;
     global str_hash: function(s: string): string;
     global mark_connection_encrypted: function(uid: string, is_encrypted: bool, is_decrypted: bool);
+    
+    # 日志分离相关变量和函数
+    global connection_directions: table[string] of string;
+    global setup_smtp_log_separation: function();
+    global store_connection_direction: function(uid: string, direction: string);
+    global cleanup_connection_direction: function(uid: string);
 }
 
 # SMTP端口配置（包括标准端口和测试端口）
@@ -1015,8 +1021,94 @@ function get_date_range_stats(start_date: string, end_date: string): StatsAggreg
 
 # 加载子模块
 @load ./mail-activity/utils
-@load ./mail-activity/smtp
-@load ./mail-activity/pop3
-@load ./mail-activity/imap
 @load ./mail-activity/direction
-# @load ./mail-activity/persistence_simple  # Module syntax issue
+@load ./mail-activity/smtp
+@load ./mail-activity/pop3  
+@load ./mail-activity/imap
+
+# 模块加载完成后设置日志分离
+event zeek_done()
+{
+    # 这个事件在所有模块加载后触发
+}
+
+# 日志分离功能实现
+
+# 根据连接方向确定SMTP日志路径的函数  
+function smtp_path_by_direction(id: Log::ID, path: string, rec: any): string
+{
+    # 从SMTP记录中获取连接UID
+    local smtp_rec = rec as SMTP::Info;
+    local uid = smtp_rec$uid;
+    
+    # 查询连接方向
+    if ( uid in connection_directions ) {
+        local direction = connection_directions[uid];
+        
+        if ( direction == "outbound_from_local" ) {
+            return "sent/smtp";
+        } else if ( direction == "inbound_to_local" ) {
+            return "received/smtp";
+        }
+    }
+    
+    # 默认情况（internal、transit、unknown等）
+    return "smtp";
+}
+
+# 设置SMTP日志分离过滤器
+function setup_smtp_log_separation()
+{
+    # 为内置SMTP日志添加自定义路径过滤器
+    local filter: Log::Filter = [
+        $name = "smtp-direction-filter",
+        $path_func = smtp_path_by_direction
+    ];
+    
+    # 应用过滤器到SMTP日志流
+    Log::add_filter(SMTP::LOG, filter);
+    
+    print "[LOG_SEPARATION] SMTP log separation filter applied";
+}
+
+# 存储连接方向信息
+function store_connection_direction(uid: string, direction: string)
+{
+    connection_directions[uid] = direction;
+    print fmt("[LOG_SEPARATION] Stored direction for %s: %s", uid, direction);
+}
+
+# 清理连接方向信息（在连接关闭时调用）  
+function cleanup_connection_direction(uid: string)
+{
+    if ( uid in connection_directions ) {
+        delete connection_directions[uid];
+        print fmt("[LOG_SEPARATION] Cleaned up direction info for %s", uid);
+    }
+}
+
+# 连接状态移除事件处理 - 自动清理方向信息
+event connection_state_remove(c: connection)
+{
+    cleanup_connection_direction(c$uid);
+}
+
+# 监听SMTP请求事件，存储方向信息
+event smtp_request(c: connection, is_orig: bool, command: string, arg: string)
+{
+    # 在SMTP连接建立时存储方向信息
+    local uid = c$uid;
+    if ( uid in connection_tracks && uid in smtp_sessions ) {
+        local track = connection_tracks[uid];
+        local direction_info = determine_direction(c, track);
+        store_connection_direction(uid, direction_info$direction_raw);
+    }
+}
+
+# 延迟初始化事件，确保所有模块都已加载
+event network_time_init()
+{
+    # 设置SMTP日志分离
+    setup_smtp_log_separation();
+}
+

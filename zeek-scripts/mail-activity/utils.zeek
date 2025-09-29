@@ -183,6 +183,8 @@ event connection_state_remove(c: connection)
         print fmt("[SMTP] Connection ended: %s", uid);
     }
     
+    # 清理日志分离的方向信息将在log-separation模块中处理
+    
     # 清理POP3会话
     if (uid in pop3_sessions) {
         local pop3_info = pop3_sessions[uid];
